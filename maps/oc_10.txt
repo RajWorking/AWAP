@@ -11,15 +11,15 @@ SWITCH: turn=230 duration=90
 SWITCH: turn=230 duration=90
 
 ORDERS:
-start= 10 duration=200 required=EGG reward=1000 penalty=8500
-start= 20 duration=200 required=NOODLES reward=2500 penalty=13000
-start= 30 duration=200 required=MEAT reward=4000 penalty=17500
-start= 40 duration=200 required=ONIONS reward=5500 penalty=22000
-start= 50 duration=200 required=SAUCE reward=7000 penalty=1000
-start= 60 duration=200 required=EGG,NOODLES reward=8500 penalty=5500
-start= 70 duration=200 required=EGG,ONIONS reward=10000 penalty=10000
-start= 80 duration=200 required=MEAT,ONIONS reward=11500 penalty=14500
-start= 90 duration=200 required=NOODLES,SAUCE reward=13000 penalty=19000
+start=10 duration=200 required=EGG reward=1000 penalty=8500
+start=20 duration=200 required=NOODLES reward=2500 penalty=13000
+start=30 duration=200 required=MEAT reward=4000 penalty=17500
+start=40 duration=200 required=ONIONS reward=5500 penalty=22000
+start=50 duration=200 required=SAUCE reward=7000 penalty=1000
+start=60 duration=200 required=EGG,NOODLES reward=8500 penalty=5500
+start=70 duration=200 required=EGG,ONIONS reward=10000 penalty=10000
+start=80 duration=200 required=MEAT,ONIONS reward=11500 penalty=14500
+start=90 duration=200 required=NOODLES,SAUCE reward=13000 penalty=19000
 start=100 duration=200 required=MEAT,SAUCE reward=14500 penalty=23500
 start=110 duration=200 required=EGG,MEAT reward=16000 penalty=2500
 start=120 duration=200 required=EGG,SAUCE reward=17500 penalty=7000
