@@ -90,12 +90,8 @@ class ShopCosts(Enum):
   PAN = ("PAN", 4)
 
 
-class FrozenMeta(type):
-  '''cannot edit game constants check'''
-  def __setattr__(cls, name, value):
-    raise AttributeError(f"Cannot edit constants '{name}' in GameConstants")
-
-class GameConstants(metaclass = FrozenMeta):
+@dataclass(frozen=True)
+class GameConstants:
   TOTAL_TURNS = 500 #this is default without engine specification
 
   MONEY_PER_TURN = 1
