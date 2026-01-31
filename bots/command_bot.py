@@ -29,11 +29,11 @@ def bfs_to_adjacent(controller: RobotController, start: Tuple[int, int], goal: T
 
     queue = deque([(start, [])])
     visited = {start}
-    m = controller.get_map()
+    m = controller.get_map(controller.get_team())
 
     # Mark occupied tiles (other bots)
     occupied = set()
-    for bid in controller.get_team_bot_ids():
+    for bid in controller.get_team_bot_ids(controller.get_team()):
         st = controller.get_bot_state(bid)
         if st:
             occupied.add((st['x'], st['y']))
@@ -69,7 +69,7 @@ def bfs_to_adjacent(controller: RobotController, start: Tuple[int, int], goal: T
 
 def find_tile(controller: RobotController, tile_name: str) -> Optional[Tuple[int, int]]:
     """Find first tile of given type."""
-    m = controller.get_map()
+    m = controller.get_map(controller.get_team())
     for x in range(m.width):
         for y in range(m.height):
             if m.tiles[x][y].tile_name == tile_name:
@@ -79,7 +79,7 @@ def find_tile(controller: RobotController, tile_name: str) -> Optional[Tuple[int
 
 def find_empty_tile(controller: RobotController, tile_name: str) -> Optional[Tuple[int, int]]:
     """Find first empty tile of given type (no item on it)."""
-    m = controller.get_map()
+    m = controller.get_map(controller.get_team())
     for x in range(m.width):
         for y in range(m.height):
             tile = m.tiles[x][y]
@@ -90,7 +90,7 @@ def find_empty_tile(controller: RobotController, tile_name: str) -> Optional[Tup
 
 def find_item_on_tile(controller: RobotController, tile_name: str, item_check) -> Optional[Tuple[int, int]]:
     """Find tile with specific item. item_check is a lambda that takes item and returns bool."""
-    m = controller.get_map()
+    m = controller.get_map(controller.get_team())
     for x in range(m.width):
         for y in range(m.height):
             tile = m.tiles[x][y]
@@ -328,7 +328,7 @@ class CookIngredientCommand(Command):
             # Wait for cooking to complete (cooked_stage == 1)
             # Food is placed in a Pan on the cooker, so we need to check the Pan's food
             cx, cy = self.cooker_loc
-            tile = controller.get_map().tiles[cx][cy]
+            tile = controller.get_map(controller.get_team()).tiles[cx][cy]
             item = getattr(tile, "item", None)
 
             # Check if there's a pan with food cooking
@@ -384,7 +384,7 @@ class StoreInBoxCommand(Command):
             # Find a suitable box: either empty or containing the same food type
             holding_food_name = holding.get('food_name') if holding and holding.get('type') == 'Food' else None
 
-            m = controller.get_map()
+            m = controller.get_map(controller.get_team())
             for x in range(m.width):
                 for y in range(m.height):
                     tile = m.tiles[x][y]
@@ -534,7 +534,7 @@ class PickupPlateFromCounterCommand(Command):
 
         if self.plate_loc is None:
             # Find plate on counter (item is actual object, not dict)
-            m = controller.get_map()
+            m = controller.get_map(controller.get_team())
             for x in range(m.width):
                 for y in range(m.height):
                     tile = m.tiles[x][y]
@@ -786,7 +786,7 @@ class BotPlayer:
 
     def play_turn(self, controller: RobotController):
         """Main bot logic - called each turn."""
-        bots = controller.get_team_bot_ids()
+        bots = controller.get_team_bot_ids(controller.get_team())
         if not bots:
             return
 
@@ -794,7 +794,7 @@ class BotPlayer:
 
         # If no commands, check for new orders
         if not self.command_queue or self.current_command_index >= len(self.command_queue):
-            orders = controller.get_orders()
+            orders = controller.get_orders(controller.get_team())
 
             # Find first active, unprocessed order
             for order in orders:
