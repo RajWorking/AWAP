@@ -59,6 +59,24 @@ def resolve_bot_arg(bot_arg: str, bots: List[str]) -> Optional[str]:
     return None
 
 
+def resolve_map_arg(map_arg: str, maps: List[str]) -> Optional[str]:
+    if not map_arg:
+        return None
+    for path in maps:
+        if map_label(path) == map_arg:
+            return path
+    if map_arg.endswith(".txt"):
+        for path in maps:
+            if os.path.normpath(path) == os.path.normpath(map_arg):
+                return path
+    else:
+        candidate = f"{map_arg}.txt"
+        for path in maps:
+            if map_label(path) == candidate:
+                return path
+    return None
+
+
 def run_match(
     red_bot_path: str,
     blue_bot_path: str,
@@ -182,6 +200,11 @@ def main() -> int:
         default=None,
         help="optional bot name (without .py) or path; if set, run only this bot against all others",
     )
+    ap.add_argument(
+        "--map",
+        default=None,
+        help="optional map name (with .txt) or path; if set, run only this map",
+    )
     args = ap.parse_args()
 
     bots = list_files(args.bots_dir, ".py")
@@ -204,6 +227,13 @@ def main() -> int:
             print("[ARENA] Need at least two bots to run matches")
             return 1
 
+    focus_map_path = None
+    if args.map:
+        focus_map_path = resolve_map_arg(args.map, maps)
+        if focus_map_path is None:
+            print(f"[ARENA] Map not found: {args.map}")
+            return 1
+
     leaderboard: Dict[str, Dict[str, int]] = {}
     match_logs: List[str] = []
 
@@ -219,7 +249,8 @@ def main() -> int:
             for blue_bot in bots[i + 1 :]:
                 pairings.append((red_bot, blue_bot))
 
-    for map_path in maps:
+    map_list = [focus_map_path] if focus_map_path else maps
+    for map_path in map_list:
         for red_bot, blue_bot in pairings:
             result = run_match(
                 red_bot,
@@ -237,6 +268,8 @@ def main() -> int:
         f.write("[ARENA] Bots: " + ", ".join(bot_label(b) for b in bots) + "\n")
         if focus_bot_path:
             f.write("[ARENA] Focus bot: " + bot_label(focus_bot_path) + "\n")
+        if focus_map_path:
+            f.write("[ARENA] Focus map: " + map_label(focus_map_path) + "\n")
         f.write("[ARENA] Maps: " + ", ".join(map_label(m) for m in maps) + "\n")
         for line in match_logs:
             f.write(line + "\n")
