@@ -19,7 +19,7 @@
 ..R..........#......
 .............#...R..
 
-SWITCH: turn=250 duration=100
+SWITCH: turn=10 duration=5
 
 ORDERS:
 start=1  duration=50  required=EGG,NOODLES           reward=10 penalty=5
