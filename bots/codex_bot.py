@@ -18,6 +18,11 @@ class BotPlayer:
 
         self.role_by_bot: Dict[int, str] = {}
         self.turn_initialized = False
+        self.current_order_id: Optional[int] = None
+
+        self.single_plan: List[Dict] = []
+        self.single_plan_idx = 0
+        self.single_processed_orders = set()
 
     # ----------------- map helpers -----------------
     def _scan_tiles(self):
@@ -127,6 +132,29 @@ class BotPlayer:
             if max(abs(nbx - tx), abs(nby - ty)) <= 1:
                 action_fn()
             return True
+        return False
+
+    def _move_then_act(self, controller: RobotController, bot_id: int, tx: int, ty: int, action_fn) -> bool:
+        bot = controller.get_bot_state(bot_id)
+        if bot is None:
+            return False
+        bx, by = bot["x"], bot["y"]
+        if max(abs(bx - tx), abs(by - ty)) <= 1:
+            return bool(action_fn())
+
+        blocked = set()
+        for other_id in controller.get_team_bot_ids(controller.get_team()):
+            if other_id == bot_id:
+                continue
+            other = controller.get_bot_state(other_id)
+            if other:
+                blocked.add((other["x"], other["y"]))
+
+        step = self._bfs_step(controller, (bx, by), lambda x, y: max(abs(x - tx), abs(y - ty)) <= 1, blocked)
+        if step is None:
+            step = self._bfs_step(controller, (bx, by), lambda x, y: max(abs(x - tx), abs(y - ty)) <= 1, set())
+        if step and (step[0] != 0 or step[1] != 0):
+            controller.move(bot_id, step[0], step[1])
         return False
 
     # ----------------- orders -----------------
@@ -406,7 +434,7 @@ class BotPlayer:
         for bid in unassigned:
             self.role_by_bot[bid] = "runner"
 
-    def _pick_food_for_role(self, missing: Counter, role: str) -> Optional[FoodType]:
+    def _pick_food_for_role(self, missing: Counter, role: str, strict_roles: bool) -> Optional[FoodType]:
         if not missing:
             return None
         candidates = []
@@ -417,6 +445,13 @@ class BotPlayer:
                 ft = FoodType[name]
             except Exception:
                 continue
+            if strict_roles:
+                if ft.can_cook and role not in {"cook"}:
+                    continue
+                if ft.can_chop and not ft.can_cook and role not in {"prep"}:
+                    continue
+                if (not ft.can_chop and not ft.can_cook) and role not in {"plate", "runner", "prep", "cook"}:
+                    continue
             steps = 1 + (1 if ft.can_chop else 0) + (1 if ft.can_cook else 0)
             bonus = 0
             if role == "cook" and ft.can_cook:
@@ -433,13 +468,23 @@ class BotPlayer:
         candidates.sort(reverse=True)
         return candidates[0][3]
 
-    def _handle_holding_food(self, controller: RobotController, bot_id: int, food_type: FoodType) -> bool:
+    def _handle_holding_food(self, controller: RobotController, bot_id: int, food_type: FoodType, missing: Counter) -> bool:
         bot = controller.get_bot_state(bot_id)
         holding = bot.get("holding") if bot else None
         if not holding or holding.get("type") != "Food":
             return False
 
         if int(holding.get("cooked_stage", 0)) >= 2:
+            trash = self._nearest(self.tiles.get("TRASH", []), bot["x"], bot["y"]) if bot else None
+            if trash:
+                return self._move_or_action(controller, bot_id, trash[0], trash[1], lambda: controller.trash(bot_id, trash[0], trash[1]))
+            return False
+
+        if not self._food_needed(missing, food_type.food_name):
+            counter = self._find_empty_counter(controller, bot_id)
+            if counter is not None:
+                cx, cy = counter
+                return self._move_or_action(controller, bot_id, cx, cy, lambda: controller.place(bot_id, cx, cy))
             trash = self._nearest(self.tiles.get("TRASH", []), bot["x"], bot["y"]) if bot else None
             if trash:
                 return self._move_or_action(controller, bot_id, trash[0], trash[1], lambda: controller.trash(bot_id, trash[0], trash[1]))
@@ -466,10 +511,15 @@ class BotPlayer:
 
         return self._add_to_plate(controller, bot_id)
 
-    def _handle_plate_holding(self, controller: RobotController, bot_id: int, missing: Counter, role: str) -> bool:
+    def _handle_plate_holding(self, controller: RobotController, bot_id: int, missing: Counter, role: str, bad_plate: bool) -> bool:
         bot = controller.get_bot_state(bot_id)
         holding = bot.get("holding") if bot else None
         if not holding or holding.get("type") != "Plate":
+            return False
+        if bad_plate:
+            trash = self._nearest(self.tiles.get("TRASH", []), bot["x"], bot["y"]) if bot else None
+            if trash:
+                return self._move_or_action(controller, bot_id, trash[0], trash[1], lambda: controller.trash(bot_id, trash[0], trash[1]))
             return False
         if holding.get("dirty"):
             trash = self._nearest(self.tiles.get("TRASH", []), bot["x"], bot["y"]) if bot else None
@@ -487,9 +537,12 @@ class BotPlayer:
                 return self._move_or_action(controller, bot_id, ax, ay, lambda: controller.place(bot_id, ax, ay))
         return False
 
-    def _handle_idle(self, controller: RobotController, bot_id: int, missing: Counter, role: str) -> bool:
+    def _handle_idle(self, controller: RobotController, bot_id: int, missing: Counter, role: str, target_food: Optional[FoodType], bad_plate: bool) -> bool:
         bot = controller.get_bot_state(bot_id)
         if bot is None:
+            return False
+
+        if bad_plate:
             return False
 
         if not missing:
@@ -511,7 +564,6 @@ class BotPlayer:
             x, y, _ = foods_on_counters[0]
             return self._move_or_action(controller, bot_id, x, y, lambda: controller.pickup(bot_id, x, y))
 
-        target_food = self._pick_food_for_role(missing, role)
         if target_food is None:
             return False
 
@@ -529,13 +581,13 @@ class BotPlayer:
             else False,
         )
 
-    def _drive_bot(self, controller: RobotController, bot_id: int, missing: Counter, role: str):
+    def _drive_bot(self, controller: RobotController, bot_id: int, missing: Counter, role: str, target_food: Optional[FoodType], bad_plate: bool):
         bot = controller.get_bot_state(bot_id)
         if bot is None:
             return
 
         holding = bot.get("holding")
-        if self._handle_plate_holding(controller, bot_id, missing, role):
+        if self._handle_plate_holding(controller, bot_id, missing, role, bad_plate):
             return
 
         if holding and holding.get("type") == "Food":
@@ -543,18 +595,227 @@ class BotPlayer:
                 food_type = FoodType[holding.get("food_name")]
             except Exception:
                 return
-            if self._handle_holding_food(controller, bot_id, food_type):
+            if self._handle_holding_food(controller, bot_id, food_type, missing):
                 return
 
         if holding is not None:
             return
 
-        self._handle_idle(controller, bot_id, missing, role)
+        self._handle_idle(controller, bot_id, missing, role, target_food, bad_plate)
+
+    # ----------------- single-bot plan -----------------
+    def _single_build_plan(self, order) -> List[Dict]:
+        plan: List[Dict] = []
+        plan.append({"type": "get_plate"})
+        plan.append({"type": "place_plate"})
+        for name in order.get("required", []):
+            try:
+                food = FoodType[name.upper()]
+            except Exception:
+                continue
+            plan.append({"type": "buy_food", "food": food})
+            if food.can_chop:
+                plan.append({"type": "chop_food", "food": food})
+            if food.can_cook:
+                plan.append({"type": "cook_food", "food": food})
+            plan.append({"type": "add_to_plate"})
+        plan.append({"type": "pickup_plate"})
+        plan.append({"type": "submit"})
+        plan.append({"type": "wash_until_clean"})
+        return plan
+
+    def _single_get_targets(self, controller: RobotController):
+        if self.assembly_counter is None:
+            self.assembly_counter = self._choose_assembly_counter()
+        if self.prep_counter is None:
+            self.prep_counter = self._choose_prep_counter()
+        if self.cooker_tile is None:
+            self.cooker_tile = self._choose_cooker()
+        sink = self._nearest(self.tiles.get("SINK", []), *(self.assembly_counter or (0, 0)))
+        sinktable = self._nearest(self.tiles.get("SINKTABLE", []), *(self.assembly_counter or (0, 0)))
+        shop = self._nearest(self.tiles.get("SHOP", []), *(self.assembly_counter or (0, 0)))
+        submit = self._nearest(self.tiles.get("SUBMIT", []), *(self.assembly_counter or (0, 0)))
+        return sink, sinktable, shop, submit
+
+    def _single_step(self, controller: RobotController, bot_id: int, task: Dict) -> bool:
+        bot = controller.get_bot_state(bot_id)
+        if bot is None:
+            return False
+        holding = bot.get("holding")
+        sink, sinktable, shop, submit = self._single_get_targets(controller)
+        ax, ay = self.assembly_counter if self.assembly_counter else (None, None)
+
+        ttype = task.get("type")
+
+        if ttype == "get_plate":
+            if holding and holding.get("type") == "Plate":
+                return True
+            if sinktable:
+                sx, sy = sinktable
+                tile = controller.get_tile(controller.get_team(), sx, sy)
+                if tile and getattr(tile, "num_clean_plates", 0) > 0:
+                    return self._move_then_act(controller, bot_id, sx, sy, lambda: controller.take_clean_plate(bot_id, sx, sy))
+            if shop:
+                sx, sy = shop
+                return self._move_then_act(
+                    controller,
+                    bot_id,
+                    sx,
+                    sy,
+                    lambda: controller.buy(bot_id, ShopCosts.PLATE, sx, sy)
+                    if controller.can_buy(bot_id, ShopCosts.PLATE, sx, sy)
+                    else False,
+                )
+            return False
+
+        if ttype == "place_plate":
+            if ax is None:
+                return False
+            tile = controller.get_tile(controller.get_team(), ax, ay)
+            if tile and isinstance(getattr(tile, "item", None), Plate):
+                return True
+            if holding and holding.get("type") == "Plate":
+                return self._move_then_act(controller, bot_id, ax, ay, lambda: controller.place(bot_id, ax, ay))
+            return False
+
+        if ttype == "buy_food":
+            food = task.get("food")
+            if holding and holding.get("type") == "Food" and holding.get("food_name") == food.food_name:
+                return True
+            if shop:
+                sx, sy = shop
+                return self._move_then_act(
+                    controller,
+                    bot_id,
+                    sx,
+                    sy,
+                    lambda: controller.buy(bot_id, food, sx, sy)
+                    if controller.can_buy(bot_id, food, sx, sy)
+                    else False,
+                )
+            return False
+
+        if ttype == "chop_food":
+            if holding and holding.get("type") == "Food" and holding.get("chopped"):
+                return True
+            counter = task.get("counter")
+            if counter is None:
+                counter = self._find_empty_counter(controller, bot_id)
+                if counter is None:
+                    return False
+                task["counter"] = counter
+            cx, cy = counter
+            stage = task.get("stage", "place")
+            if stage == "place":
+                tile = controller.get_tile(controller.get_team(), cx, cy)
+                item = getattr(tile, "item", None) if tile else None
+                if holding is None and isinstance(item, Food):
+                    task["stage"] = "chop" if not item.chopped else "pickup"
+                    return False
+                if holding is not None and holding.get("type") == "Food":
+                    if self._move_then_act(controller, bot_id, cx, cy, lambda: controller.place(bot_id, cx, cy)):
+                        task["stage"] = "chop"
+                return False
+            if stage == "chop":
+                if self._move_then_act(controller, bot_id, cx, cy, lambda: controller.chop(bot_id, cx, cy)):
+                    task["stage"] = "pickup"
+                return False
+            if stage == "pickup":
+                return self._move_then_act(controller, bot_id, cx, cy, lambda: controller.pickup(bot_id, cx, cy))
+            return False
+
+        if ttype == "cook_food":
+            if self.cooker_tile is None:
+                return False
+            cx, cy = self.cooker_tile
+            stage = task.get("stage", "place")
+            if stage == "place":
+                if holding is None or holding.get("type") != "Food":
+                    return False
+                if holding.get("cooked_stage", 0) >= 1:
+                    return True
+                tile = controller.get_tile(controller.get_team(), cx, cy)
+                pan = getattr(tile, "item", None)
+                if not isinstance(pan, Pan) or pan.food is not None:
+                    return False
+                if self._move_then_act(controller, bot_id, cx, cy, lambda: controller.place(bot_id, cx, cy)):
+                    task["stage"] = "wait"
+                return False
+            if stage == "wait":
+                tile = controller.get_tile(controller.get_team(), cx, cy)
+                pan = getattr(tile, "item", None)
+                food = pan.food if isinstance(pan, Pan) else None
+                if isinstance(food, Food) and food.cooked_stage == 1:
+                    task["stage"] = "pickup"
+                return False
+            if stage == "pickup":
+                return self._move_then_act(controller, bot_id, cx, cy, lambda: controller.take_from_pan(bot_id, cx, cy))
+            return False
+
+        if ttype == "add_to_plate":
+            if holding and holding.get("type") == "Food":
+                if self.assembly_counter is None:
+                    return False
+                ax, ay = self.assembly_counter
+                return self._move_then_act(controller, bot_id, ax, ay, lambda: controller.add_food_to_plate(bot_id, ax, ay))
+            if holding and holding.get("type") == "Plate":
+                if ax is None:
+                    return False
+                tile = controller.get_tile(controller.get_team(), ax, ay)
+                if tile and getattr(tile, "item", None) is None:
+                    return self._move_then_act(controller, bot_id, ax, ay, lambda: controller.place(bot_id, ax, ay))
+            return False
+
+        if ttype == "pickup_plate":
+            if holding and holding.get("type") == "Plate":
+                return True
+            if ax is None:
+                return False
+            return self._move_then_act(controller, bot_id, ax, ay, lambda: controller.pickup(bot_id, ax, ay))
+
+        if ttype == "submit":
+            if holding and holding.get("type") == "Plate":
+                if submit:
+                    sx, sy = submit
+                    return self._move_then_act(controller, bot_id, sx, sy, lambda: controller.submit(bot_id, sx, sy))
+            return False
+
+        if ttype == "wash_until_clean":
+            if sinktable:
+                sx, sy = sinktable
+                tile = controller.get_tile(controller.get_team(), sx, sy)
+                if tile and getattr(tile, "num_clean_plates", 0) > 0:
+                    return True
+            if sink:
+                sx, sy = sink
+                return self._move_then_act(controller, bot_id, sx, sy, lambda: controller.wash_sink(bot_id, sx, sy))
+            return False
+
+        return False
 
     # ----------------- main entry -----------------
     def play_turn(self, controller: RobotController):
         bot_ids = controller.get_team_bot_ids(controller.get_team())
         if not bot_ids:
+            return
+        if len(bot_ids) == 1:
+            bot_id = bot_ids[0]
+            if not self.single_plan or self.single_plan_idx >= len(self.single_plan):
+                orders = self._active_orders(controller)
+                next_order = None
+                for o in orders:
+                    if o.get("order_id") not in self.single_processed_orders:
+                        next_order = o
+                        break
+                if next_order is None:
+                    return
+                self.single_processed_orders.add(next_order.get("order_id"))
+                self.single_plan = self._single_build_plan(next_order)
+                self.single_plan_idx = 0
+
+            task = self.single_plan[self.single_plan_idx]
+            if self._single_step(controller, bot_id, task):
+                self.single_plan_idx += 1
             return
 
         if not self.turn_initialized:
@@ -565,7 +826,17 @@ class BotPlayer:
 
         self._assign_roles(controller, bot_ids)
 
-        order = self._choose_order(controller)
+        active_orders = self._active_orders(controller)
+        if self.current_order_id is not None:
+            order = next((o for o in active_orders if o.get("order_id") == self.current_order_id), None)
+            if order is None:
+                self.current_order_id = None
+        if self.current_order_id is None:
+            order = self._choose_order(controller)
+            if order is not None:
+                self.current_order_id = order.get("order_id")
+
+        order = next((o for o in active_orders if o.get("order_id") == self.current_order_id), None)
         if order is None or self.assembly_counter is None:
             return
 
@@ -574,12 +845,32 @@ class BotPlayer:
         plate_counter = Counter()
         if plate_info is not None:
             plate_counter = self._plate_food_counter(plate_info[2])
+        extra = plate_counter - required
+        bad_plate = bool(extra)
         missing = required - plate_counter
 
         # prioritize plate bot first to keep the plate in place
         role_order = ["plate", "cook", "prep", "runner"]
         bots_by_role = sorted(bot_ids, key=lambda bid: role_order.index(self.role_by_bot.get(bid, "runner")))
 
+        if bad_plate and plate_info is not None and plate_info[0] == "counter":
+            plate_bot = next((bid for bid in bots_by_role if self.role_by_bot.get(bid) == "plate"), bots_by_role[0])
+            ax, ay = plate_info[1]
+            self._move_or_action(controller, plate_bot, ax, ay, lambda: controller.pickup(plate_bot, ax, ay))
+            return
+
+        plan_missing = missing.copy()
+        strict_roles = len(bot_ids) > 1
+        assignments: Dict[int, Optional[FoodType]] = {}
         for bid in bots_by_role:
             role = self.role_by_bot.get(bid, "runner")
-            self._drive_bot(controller, bid, missing, role)
+            target_food = self._pick_food_for_role(plan_missing, role, strict_roles)
+            if target_food is not None:
+                plan_missing[target_food.food_name] -= 1
+                if plan_missing[target_food.food_name] <= 0:
+                    del plan_missing[target_food.food_name]
+            assignments[bid] = target_food
+
+        for bid in bots_by_role:
+            role = self.role_by_bot.get(bid, "runner")
+            self._drive_bot(controller, bid, missing, role, assignments.get(bid), bad_plate)
