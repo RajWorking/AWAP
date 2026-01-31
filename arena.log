@@ -1,0 +1,24 @@
+[ARENA] Bots: codex_bot, duo_noodle_bot, task_based_bot
+[ARENA] Maps: map1.txt, map2.txt, small_wall.txt
+[MATCH] map=map1.txt winner=NONE loser=NONE red=codex_bot blue=duo_noodle_bot outcome=DRAW red_money=10406 blue_money=10406 reason=draw
+[MATCH] map=map1.txt winner=codex_bot loser=task_based_bot red=codex_bot blue=task_based_bot outcome=WIN red_money=151 blue_money=151 reason=blue_crash
+[MATCH] map=map1.txt winner=NONE loser=NONE red=duo_noodle_bot blue=codex_bot outcome=DRAW red_money=10406 blue_money=10406 reason=draw
+[MATCH] map=map1.txt winner=duo_noodle_bot loser=task_based_bot red=duo_noodle_bot blue=task_based_bot outcome=WIN red_money=151 blue_money=151 reason=blue_crash
+[MATCH] map=map1.txt winner=codex_bot loser=task_based_bot red=task_based_bot blue=codex_bot outcome=WIN red_money=151 blue_money=151 reason=red_crash
+[MATCH] map=map1.txt winner=duo_noodle_bot loser=task_based_bot red=task_based_bot blue=duo_noodle_bot outcome=WIN red_money=151 blue_money=151 reason=red_crash
+[MATCH] map=map2.txt winner=codex_bot loser=duo_noodle_bot red=codex_bot blue=duo_noodle_bot outcome=WIN red_money=-472 blue_money=-552 reason=score
+[MATCH] map=map2.txt winner=codex_bot loser=task_based_bot red=codex_bot blue=task_based_bot outcome=WIN red_money=151 blue_money=151 reason=blue_crash
+[MATCH] map=map2.txt winner=codex_bot loser=duo_noodle_bot red=duo_noodle_bot blue=codex_bot outcome=WIN red_money=-552 blue_money=-472 reason=score
+[MATCH] map=map2.txt winner=duo_noodle_bot loser=task_based_bot red=duo_noodle_bot blue=task_based_bot outcome=WIN red_money=151 blue_money=151 reason=blue_crash
+[MATCH] map=map2.txt winner=codex_bot loser=task_based_bot red=task_based_bot blue=codex_bot outcome=WIN red_money=151 blue_money=151 reason=red_crash
+[MATCH] map=map2.txt winner=duo_noodle_bot loser=task_based_bot red=task_based_bot blue=duo_noodle_bot outcome=WIN red_money=151 blue_money=151 reason=red_crash
+[MATCH] map=small_wall.txt winner=codex_bot loser=duo_noodle_bot red=codex_bot blue=duo_noodle_bot outcome=WIN red_money=-996 blue_money=-1056 reason=score
+[MATCH] map=small_wall.txt winner=codex_bot loser=task_based_bot red=codex_bot blue=task_based_bot outcome=WIN red_money=151 blue_money=151 reason=blue_crash
+[MATCH] map=small_wall.txt winner=codex_bot loser=duo_noodle_bot red=duo_noodle_bot blue=codex_bot outcome=WIN red_money=-1056 blue_money=-996 reason=score
+[MATCH] map=small_wall.txt winner=duo_noodle_bot loser=task_based_bot red=duo_noodle_bot blue=task_based_bot outcome=WIN red_money=151 blue_money=151 reason=blue_crash
+[MATCH] map=small_wall.txt winner=codex_bot loser=task_based_bot red=task_based_bot blue=codex_bot outcome=WIN red_money=151 blue_money=151 reason=red_crash
+[MATCH] map=small_wall.txt winner=duo_noodle_bot loser=task_based_bot red=task_based_bot blue=duo_noodle_bot outcome=WIN red_money=151 blue_money=151 reason=red_crash
+[LEADERBOARD]
+1. codex_bot wins=10 losses=0 draws=2 games=12 win_rate=0.833
+2. duo_noodle_bot wins=6 losses=4 draws=2 games=12 win_rate=0.500
+3. task_based_bot wins=0 losses=12 draws=0 games=12 win_rate=0.000
