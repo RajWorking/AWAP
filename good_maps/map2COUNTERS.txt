@@ -1,0 +1,15 @@
+.CCC$$
+K.....
+K..b..
+S.....
+T.....
+.UB...
+
+SWITCH: turn=10 duration=10
+
+ORDERS:
+start=1  duration=5000  required=NOODLES,MEAT           reward=1000 penalty=5
+start=1  duration=5000  required=NOODLES,MEAT           reward=1000 penalty=5
+start=1  duration=5000  required=NOODLES,NOODLES           reward=1000 penalty=5
+start=1  duration=5000  required=NOODLES,SAUCE           reward=1000 penalty=5
+start=1  duration=5000  required=MEAT,SAUCE,EGG,ONIONS         reward=1000 penalty=5
