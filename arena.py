@@ -46,6 +46,19 @@ def map_label(path: str) -> str:
     return os.path.basename(path)
 
 
+def resolve_bot_arg(bot_arg: str, bots: List[str]) -> Optional[str]:
+    if not bot_arg:
+        return None
+    for path in bots:
+        if bot_label(path) == bot_arg:
+            return path
+    if bot_arg.endswith(".py"):
+        for path in bots:
+            if os.path.normpath(path) == os.path.normpath(bot_arg):
+                return path
+    return None
+
+
 def run_match(
     red_bot_path: str,
     blue_bot_path: str,
@@ -164,6 +177,11 @@ def main() -> int:
     ap.add_argument("--turns", type=int, default=GameConstants.TOTAL_TURNS, help="turn limit per game")
     ap.add_argument("--timeout", type=float, default=0.5, help="per-turn timeout seconds per bot")
     ap.add_argument("--log", default="arena.log", help="path to output log file")
+    ap.add_argument(
+        "--bot",
+        default=None,
+        help="optional bot name (without .py) or path; if set, run only this bot against all others",
+    )
     args = ap.parse_args()
 
     bots = list_files(args.bots_dir, ".py")
@@ -176,28 +194,49 @@ def main() -> int:
         print(f"[ARENA] No maps found in {args.maps_dir}")
         return 1
 
+    focus_bot_path = None
+    if args.bot:
+        focus_bot_path = resolve_bot_arg(args.bot, bots)
+        if focus_bot_path is None:
+            print(f"[ARENA] Bot not found: {args.bot}")
+            return 1
+        if len(bots) < 2:
+            print("[ARENA] Need at least two bots to run matches")
+            return 1
+
     leaderboard: Dict[str, Dict[str, int]] = {}
     match_logs: List[str] = []
 
+    if focus_bot_path:
+        opponents = [b for b in bots if b != focus_bot_path]
+        if not opponents:
+            print("[ARENA] No opponents found for selected bot")
+            return 1
+        pairings = [(focus_bot_path, other) for other in opponents]
+    else:
+        pairings = []
+        for i, red_bot in enumerate(bots):
+            for blue_bot in bots[i + 1 :]:
+                pairings.append((red_bot, blue_bot))
+
     for map_path in maps:
-        for red_bot in bots:
-            for blue_bot in bots:
-                if red_bot == blue_bot:
-                    continue
-                result = run_match(
-                    red_bot,
-                    blue_bot,
-                    map_path,
-                    turn_limit=args.turns,
-                    per_turn_timeout_s=args.timeout,
-                )
-                update_leaderboard(leaderboard, result)
-                match_logs.append(format_match_log(result))
+        for red_bot, blue_bot in pairings:
+            result = run_match(
+                red_bot,
+                blue_bot,
+                map_path,
+                turn_limit=args.turns,
+                per_turn_timeout_s=args.timeout,
+            )
+            update_leaderboard(leaderboard, result)
+            match_logs.append(format_match_log(result))
 
     leaderboard_lines = format_leaderboard(leaderboard)
 
     with open(args.log, "w", encoding="utf-8") as f:
         f.write("[ARENA] Bots: " + ", ".join(bot_label(b) for b in bots) + "\n")
+        if focus_bot_path:
+            f.write("[ARENA] Focus bot: " + bot_label(focus_bot_path) + "\n")
         f.write("[ARENA] Maps: " + ", ".join(map_label(m) for m in maps) + "\n")
         for line in match_logs:
             f.write(line + "\n")
