@@ -108,7 +108,7 @@ class BotPlayer:
             return False
         bx, by = bot["x"], bot["y"]
         if max(abs(bx - tx), abs(by - ty)) <= 1:
-            return action_fn()
+            return bool(action_fn())
 
         blocked = set()
         for other_id in controller.get_team_bot_ids(controller.get_team()):
@@ -125,7 +125,8 @@ class BotPlayer:
             controller.move(bot_id, step[0], step[1])
             nbx, nby = bx + step[0], by + step[1]
             if max(abs(nbx - tx), abs(nby - ty)) <= 1:
-                return action_fn()
+                action_fn()
+            return True
         return False
 
     # ----------------- orders -----------------
