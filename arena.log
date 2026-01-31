@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 [ARENA] Bots: codex_bot, duo_noodle_bot, task_based_bot
 [ARENA] Focus bot: codex_bot
 [ARENA] Maps: map1.txt, map2.txt, small_wall.txt
@@ -11,3 +12,60 @@
 1. codex_bot wins=5 losses=0 draws=1 games=6 win_rate=0.833
 2. duo_noodle_bot wins=0 losses=2 draws=1 games=3 win_rate=0.000
 3. task_based_bot wins=0 losses=3 draws=0 games=3 win_rate=0.000
+=======
+[ARENA] Bots: codex_bot, command_bot, duo_noodle_bot, task_based_bot
+[ARENA] Maps: map1.txt, map2.txt, map2COUNTERS.txt, small_wall.txt
+[MATCH] map=map1.txt winner=codex_bot loser=command_bot red=codex_bot blue=command_bot outcome=WIN red_money=151 blue_money=151 reason=blue_crash
+[MATCH] map=map1.txt winner=NONE loser=NONE red=codex_bot blue=duo_noodle_bot outcome=DRAW red_money=10406 blue_money=10406 reason=draw
+[MATCH] map=map1.txt winner=codex_bot loser=task_based_bot red=codex_bot blue=task_based_bot outcome=WIN red_money=151 blue_money=151 reason=blue_crash
+[MATCH] map=map1.txt winner=codex_bot loser=command_bot red=command_bot blue=codex_bot outcome=WIN red_money=151 blue_money=151 reason=red_crash
+[MATCH] map=map1.txt winner=duo_noodle_bot loser=command_bot red=command_bot blue=duo_noodle_bot outcome=WIN red_money=151 blue_money=151 reason=red_crash
+[MATCH] map=map1.txt winner=NONE loser=NONE red=command_bot blue=task_based_bot outcome=DRAW red_money=151 blue_money=151 reason=draw
+[MATCH] map=map1.txt winner=NONE loser=NONE red=duo_noodle_bot blue=codex_bot outcome=DRAW red_money=10406 blue_money=10406 reason=draw
+[MATCH] map=map1.txt winner=duo_noodle_bot loser=command_bot red=duo_noodle_bot blue=command_bot outcome=WIN red_money=151 blue_money=151 reason=blue_crash
+[MATCH] map=map1.txt winner=duo_noodle_bot loser=task_based_bot red=duo_noodle_bot blue=task_based_bot outcome=WIN red_money=151 blue_money=151 reason=blue_crash
+[MATCH] map=map1.txt winner=codex_bot loser=task_based_bot red=task_based_bot blue=codex_bot outcome=WIN red_money=151 blue_money=151 reason=red_crash
+[MATCH] map=map1.txt winner=NONE loser=NONE red=task_based_bot blue=command_bot outcome=DRAW red_money=151 blue_money=151 reason=draw
+[MATCH] map=map1.txt winner=duo_noodle_bot loser=task_based_bot red=task_based_bot blue=duo_noodle_bot outcome=WIN red_money=151 blue_money=151 reason=red_crash
+[MATCH] map=map2.txt winner=codex_bot loser=command_bot red=codex_bot blue=command_bot outcome=WIN red_money=151 blue_money=151 reason=blue_crash
+[MATCH] map=map2.txt winner=codex_bot loser=duo_noodle_bot red=codex_bot blue=duo_noodle_bot outcome=WIN red_money=105 blue_money=105 reason=blue_crash
+[MATCH] map=map2.txt winner=codex_bot loser=task_based_bot red=codex_bot blue=task_based_bot outcome=WIN red_money=151 blue_money=151 reason=blue_crash
+[MATCH] map=map2.txt winner=codex_bot loser=command_bot red=command_bot blue=codex_bot outcome=WIN red_money=151 blue_money=151 reason=red_crash
+[MATCH] map=map2.txt winner=duo_noodle_bot loser=command_bot red=command_bot blue=duo_noodle_bot outcome=WIN red_money=151 blue_money=151 reason=red_crash
+[MATCH] map=map2.txt winner=NONE loser=NONE red=command_bot blue=task_based_bot outcome=DRAW red_money=151 blue_money=151 reason=draw
+[MATCH] map=map2.txt winner=codex_bot loser=duo_noodle_bot red=duo_noodle_bot blue=codex_bot outcome=WIN red_money=80 blue_money=80 reason=red_crash
+[MATCH] map=map2.txt winner=duo_noodle_bot loser=command_bot red=duo_noodle_bot blue=command_bot outcome=WIN red_money=151 blue_money=151 reason=blue_crash
+[MATCH] map=map2.txt winner=duo_noodle_bot loser=task_based_bot red=duo_noodle_bot blue=task_based_bot outcome=WIN red_money=151 blue_money=151 reason=blue_crash
+[MATCH] map=map2.txt winner=codex_bot loser=task_based_bot red=task_based_bot blue=codex_bot outcome=WIN red_money=151 blue_money=151 reason=red_crash
+[MATCH] map=map2.txt winner=NONE loser=NONE red=task_based_bot blue=command_bot outcome=DRAW red_money=151 blue_money=151 reason=draw
+[MATCH] map=map2.txt winner=duo_noodle_bot loser=task_based_bot red=task_based_bot blue=duo_noodle_bot outcome=WIN red_money=151 blue_money=151 reason=red_crash
+[MATCH] map=map2COUNTERS.txt winner=codex_bot loser=command_bot red=codex_bot blue=command_bot outcome=WIN red_money=151 blue_money=151 reason=blue_crash
+[MATCH] map=map2COUNTERS.txt winner=duo_noodle_bot loser=codex_bot red=codex_bot blue=duo_noodle_bot outcome=WIN red_money=528 blue_money=2284 reason=score
+[MATCH] map=map2COUNTERS.txt winner=codex_bot loser=task_based_bot red=codex_bot blue=task_based_bot outcome=WIN red_money=151 blue_money=151 reason=blue_crash
+[MATCH] map=map2COUNTERS.txt winner=codex_bot loser=command_bot red=command_bot blue=codex_bot outcome=WIN red_money=151 blue_money=151 reason=red_crash
+[MATCH] map=map2COUNTERS.txt winner=duo_noodle_bot loser=command_bot red=command_bot blue=duo_noodle_bot outcome=WIN red_money=151 blue_money=151 reason=red_crash
+[MATCH] map=map2COUNTERS.txt winner=NONE loser=NONE red=command_bot blue=task_based_bot outcome=DRAW red_money=151 blue_money=151 reason=draw
+[MATCH] map=map2COUNTERS.txt winner=duo_noodle_bot loser=codex_bot red=duo_noodle_bot blue=codex_bot outcome=WIN red_money=2284 blue_money=528 reason=score
+[MATCH] map=map2COUNTERS.txt winner=duo_noodle_bot loser=command_bot red=duo_noodle_bot blue=command_bot outcome=WIN red_money=151 blue_money=151 reason=blue_crash
+[MATCH] map=map2COUNTERS.txt winner=duo_noodle_bot loser=task_based_bot red=duo_noodle_bot blue=task_based_bot outcome=WIN red_money=151 blue_money=151 reason=blue_crash
+[MATCH] map=map2COUNTERS.txt winner=codex_bot loser=task_based_bot red=task_based_bot blue=codex_bot outcome=WIN red_money=151 blue_money=151 reason=red_crash
+[MATCH] map=map2COUNTERS.txt winner=NONE loser=NONE red=task_based_bot blue=command_bot outcome=DRAW red_money=151 blue_money=151 reason=draw
+[MATCH] map=map2COUNTERS.txt winner=duo_noodle_bot loser=task_based_bot red=task_based_bot blue=duo_noodle_bot outcome=WIN red_money=151 blue_money=151 reason=red_crash
+[MATCH] map=small_wall.txt winner=codex_bot loser=command_bot red=codex_bot blue=command_bot outcome=WIN red_money=151 blue_money=151 reason=blue_crash
+[MATCH] map=small_wall.txt winner=codex_bot loser=duo_noodle_bot red=codex_bot blue=duo_noodle_bot outcome=WIN red_money=154 blue_money=76 reason=blue_crash
+[MATCH] map=small_wall.txt winner=codex_bot loser=task_based_bot red=codex_bot blue=task_based_bot outcome=WIN red_money=151 blue_money=151 reason=blue_crash
+[MATCH] map=small_wall.txt winner=codex_bot loser=command_bot red=command_bot blue=codex_bot outcome=WIN red_money=151 blue_money=151 reason=red_crash
+[MATCH] map=small_wall.txt winner=duo_noodle_bot loser=command_bot red=command_bot blue=duo_noodle_bot outcome=WIN red_money=151 blue_money=151 reason=red_crash
+[MATCH] map=small_wall.txt winner=NONE loser=NONE red=command_bot blue=task_based_bot outcome=DRAW red_money=151 blue_money=151 reason=draw
+[MATCH] map=small_wall.txt winner=codex_bot loser=duo_noodle_bot red=duo_noodle_bot blue=codex_bot outcome=WIN red_money=76 blue_money=154 reason=red_crash
+[MATCH] map=small_wall.txt winner=duo_noodle_bot loser=command_bot red=duo_noodle_bot blue=command_bot outcome=WIN red_money=151 blue_money=151 reason=blue_crash
+[MATCH] map=small_wall.txt winner=duo_noodle_bot loser=task_based_bot red=duo_noodle_bot blue=task_based_bot outcome=WIN red_money=151 blue_money=151 reason=blue_crash
+[MATCH] map=small_wall.txt winner=codex_bot loser=task_based_bot red=task_based_bot blue=codex_bot outcome=WIN red_money=151 blue_money=151 reason=red_crash
+[MATCH] map=small_wall.txt winner=NONE loser=NONE red=task_based_bot blue=command_bot outcome=DRAW red_money=151 blue_money=151 reason=draw
+[MATCH] map=small_wall.txt winner=duo_noodle_bot loser=task_based_bot red=task_based_bot blue=duo_noodle_bot outcome=WIN red_money=151 blue_money=151 reason=red_crash
+[LEADERBOARD]
+1. codex_bot wins=20 losses=2 draws=2 games=24 win_rate=0.833
+2. duo_noodle_bot wins=18 losses=4 draws=2 games=24 win_rate=0.750
+3. command_bot wins=0 losses=16 draws=8 games=24 win_rate=0.000
+4. task_based_bot wins=0 losses=16 draws=8 games=24 win_rate=0.000
+>>>>>>> b128ac0 (new map + command bot)
