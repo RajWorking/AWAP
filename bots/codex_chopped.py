@@ -342,7 +342,7 @@ class BotPlayer:
             -item[0][3],  # More urgent
             item[0][4]    # Fewer ingredients
         ))
-        
+        print(scored[0][1])
         return scored[0][1]
 
     # ----------------- plate helpers -----------------
