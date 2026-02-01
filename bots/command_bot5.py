@@ -155,6 +155,8 @@ class Command(ABC):
     def __init__(self):
         self.turn_count = 0  # Track how many turns this command has been executing
         self.max_turns = 100  # Maximum turns before declaring command stuck
+        self.last_state = None  # Track last state for progress detection
+        self.stuck_counter = 0  # Track consecutive turns without progress
 
     @abstractmethod
     def execute(self, controller: RobotController, bot_id: int) -> None:
@@ -168,7 +170,24 @@ class Command(ABC):
 
     def is_stuck(self) -> bool:
         """Check if command has been executing for too long."""
-        return self.turn_count > self.max_turns
+        # Check if exceeded max turns
+        if self.turn_count > self.max_turns:
+            return True
+        # Check if truly stuck (no progress for extended time)
+        if self.stuck_counter > 20:  # Increased threshold
+            return True
+        # Check if failed explicitly
+        if hasattr(self, 'failed') and self.failed:
+            return True
+        return False
+
+    def check_progress(self, current_state: str) -> None:
+        """Track progress to detect if command is stuck in same state."""
+        if current_state == self.last_state:
+            self.stuck_counter += 1
+        else:
+            self.stuck_counter = 0
+        self.last_state = current_state
 
     def on_start(self, controller: RobotController, bot_id: int) -> None:
         """Called when command becomes active (optional hook)."""
@@ -195,6 +214,8 @@ class BuyIngredientCommand(Command):
         super().__init__()
         self.food_type = food_type
         self.shop_loc = None
+        self.max_turns = 30  # Reduce timeout for buying
+        self.buy_attempted = False
 
     def execute(self, controller: RobotController, bot_id: int) -> None:
         self.turn_count += 1
@@ -203,24 +224,44 @@ class BuyIngredientCommand(Command):
             return
 
         bx, by = bot_state['x'], bot_state['y']
+        holding = bot_state.get('holding')
+
+        # Track progress
+        self.check_progress(f"{bx}_{by}_{holding is not None}")
+
+        # Can't buy if already holding something
+        if holding is not None:
+            if self.turn_count > 3:  # Give a few turns grace period
+                print(f"[WARN] BuyIngredient: Still holding item, can't buy")
+            return
 
         # Find shop
         if self.shop_loc is None:
             self.shop_loc = find_tile(controller, "SHOP")
             if not self.shop_loc:
+                print(f"[WARN] BuyIngredient: No SHOP tile found")
                 return
 
         sx, sy = self.shop_loc
 
         # Adjacent to shop? Buy it!
         if max(abs(bx - sx), abs(by - sy)) <= 1:
-            controller.buy(bot_id, self.food_type, sx, sy)
+            if not self.buy_attempted:
+                # Check if we can afford it
+                current_money = controller.get_team_money(controller.get_team())
+                if current_money < self.food_type.buy_cost:
+                    print(f"[WARN] BuyIngredient: Not enough money (have ${current_money}, need ${self.food_type.buy_cost})")
+                    return
+                controller.buy(bot_id, self.food_type, sx, sy)
+                self.buy_attempted = True
             return
 
         # Navigate to shop
         next_move = bfs_to_adjacent(controller, (bx, by), self.shop_loc)
         if next_move:
             controller.move(bot_id, next_move[0], next_move[1])
+        else:
+            print(f"[WARN] BuyIngredient: Cannot path to SHOP")
 
     def is_complete(self, controller: RobotController, bot_id: int) -> bool:
         bot_state = controller.get_bot_state(bot_id)
@@ -242,6 +283,8 @@ class BuyPlateCommand(Command):
     def __init__(self):
         super().__init__()
         self.shop_loc = None
+        self.max_turns = 30  # Reduce timeout
+        self.buy_attempted = False
 
     def execute(self, controller: RobotController, bot_id: int) -> None:
         self.turn_count += 1
@@ -250,21 +293,41 @@ class BuyPlateCommand(Command):
             return
 
         bx, by = bot_state['x'], bot_state['y']
+        holding = bot_state.get('holding')
+
+        # Track progress
+        self.check_progress(f"{bx}_{by}_{holding is not None}")
+
+        # Can't buy if already holding something
+        if holding is not None:
+            if self.turn_count > 3:  # Give a few turns grace period
+                print(f"[WARN] BuyPlate: Still holding item, can't buy")
+            return
 
         if self.shop_loc is None:
             self.shop_loc = find_tile(controller, "SHOP")
             if not self.shop_loc:
+                print(f"[WARN] BuyPlate: No SHOP tile found")
                 return
 
         sx, sy = self.shop_loc
 
         if max(abs(bx - sx), abs(by - sy)) <= 1:
-            controller.buy(bot_id, ShopCosts.PLATE, sx, sy)
+            if not self.buy_attempted:
+                # Check if we can afford it
+                current_money = controller.get_team_money(controller.get_team())
+                if current_money < ShopCosts.PLATE.buy_cost:
+                    print(f"[WARN] BuyPlate: Not enough money (have ${current_money}, need ${ShopCosts.PLATE.buy_cost})")
+                    return
+                controller.buy(bot_id, ShopCosts.PLATE, sx, sy)
+                self.buy_attempted = True
             return
 
         next_move = bfs_to_adjacent(controller, (bx, by), self.shop_loc)
         if next_move:
             controller.move(bot_id, next_move[0], next_move[1])
+        else:
+            print(f"[WARN] BuyPlate: Cannot path to SHOP")
 
     def is_complete(self, controller: RobotController, bot_id: int) -> bool:
         bot_state = controller.get_bot_state(bot_id)
@@ -286,7 +349,9 @@ class ChopIngredientCommand(Command):
         self.counter_loc = None
         self.state = "navigating"  # navigating → placing → chopping → picking_up → done
         self.retries = 0
-        self.max_retries = 3
+        self.max_retries = 5
+        self.max_turns = 40  # Reduce timeout for chopping
+        self.failed = False  # Track if command failed
 
     def execute(self, controller: RobotController, bot_id: int) -> None:
         self.turn_count += 1
@@ -297,12 +362,28 @@ class ChopIngredientCommand(Command):
         bx, by = bot_state['x'], bot_state['y']
         holding = bot_state.get('holding')
 
+        # Track progress to detect stuck states
+        self.check_progress(f"{self.state}_{bx}_{by}_{holding is not None}")
+
+        # If not holding anything and not in final state, abort
+        if self.state in ["navigating", "placing"] and holding is None:
+            print(f"[WARN] ChopIngredient: Lost item during {self.state}, aborting")
+            self.state = "done"
+            self.failed = True
+            return
+
         if self.state == "navigating":
             # Re-find counter if it's no longer valid or we've retried
             if self.counter_loc is None or self.retries > 0:
                 # Find closest empty counter to current position
                 self.counter_loc = find_closest_empty_tile(controller, "COUNTER", (bx, by))
                 if not self.counter_loc:
+                    self.retries += 1
+                    print(f"[WARN] ChopIngredient: No empty counter found (retry {self.retries}/{self.max_retries})")
+                    if self.retries > self.max_retries:
+                        print(f"[WARN] ChopIngredient: No empty counter available after {self.max_retries} retries, aborting")
+                        self.state = "done"
+                        self.failed = True
                     return
 
             cx, cy = self.counter_loc
@@ -316,11 +397,18 @@ class ChopIngredientCommand(Command):
                     self.counter_loc = None
                     self.retries += 1
                     if self.retries > self.max_retries:
-                        print(f"[WARN] ChopIngredient: Failed to find empty counter after {self.max_retries} retries")
+                        print(f"[WARN] ChopIngredient: Failed to find empty counter after {self.max_retries} retries, aborting")
+                        self.state = "done"
+                        self.failed = True
             else:
                 next_move = bfs_to_adjacent(controller, (bx, by), self.counter_loc)
                 if next_move:
                     controller.move(bot_id, next_move[0], next_move[1])
+                else:
+                    # Can't reach counter, find another
+                    print(f"[WARN] ChopIngredient: Counter unreachable, finding alternative")
+                    self.counter_loc = None
+                    self.retries += 1
 
         elif self.state == "placing":
             if holding is not None:
@@ -336,6 +424,10 @@ class ChopIngredientCommand(Command):
                     self.state = "navigating"
                     self.counter_loc = None
                     self.retries += 1
+                    if self.retries > self.max_retries:
+                        print(f"[WARN] ChopIngredient: Too many place failures, aborting")
+                        self.state = "done"
+                        self.failed = True
 
         elif self.state == "chopping":
             if holding is None:
@@ -344,12 +436,20 @@ class ChopIngredientCommand(Command):
                 tile = controller.get_map(controller.get_team()).tiles[cx][cy]
                 item = getattr(tile, "item", None)
                 if item and item.__class__.__name__ == "Food":
-                    controller.chop(bot_id, cx, cy)
-                    self.state = "picking_up"
+                    # Check if already chopped
+                    if getattr(item, "chopped", False):
+                        print(f"[INFO] ChopIngredient: Food already chopped, skipping to pickup")
+                        self.state = "picking_up"
+                    else:
+                        controller.chop(bot_id, cx, cy)
+                        # Note: chop() is instant, so we can move to pickup immediately
+                        self.state = "picking_up"
                 else:
-                    print(f"[WARN] ChopIngredient: Expected food on counter, state desync")
-                    self.state = "navigating"
-                    self.counter_loc = None
+                    print(f"[WARN] ChopIngredient: Expected food on counter, state desync, aborting")
+                    self.state = "done"
+            else:
+                print(f"[WARN] ChopIngredient: Still holding item during chop state, state desync")
+                self.state = "placing"
 
         elif self.state == "picking_up":
             cx, cy = self.counter_loc
@@ -363,11 +463,16 @@ class ChopIngredientCommand(Command):
                 if new_bot_state and new_bot_state.get('holding') is not None:
                     self.state = "done"
                 else:
-                    print(f"[WARN] ChopIngredient: Pickup failed")
+                    print(f"[WARN] ChopIngredient: Pickup failed, retrying")
+                    self.retries += 1
+                    if self.retries > self.max_retries:
+                        print(f"[WARN] ChopIngredient: Too many pickup failures, aborting")
+                        self.state = "done"
+                        self.failed = True
             else:
-                print(f"[WARN] ChopIngredient: Chopped food disappeared from counter")
-                self.state = "navigating"
-                self.counter_loc = None
+                print(f"[WARN] ChopIngredient: Chopped food disappeared from counter, aborting")
+                self.state = "done"
+                self.failed = True
 
     def is_complete(self, controller: RobotController, bot_id: int) -> bool:
         if self.state != "done":
@@ -749,6 +854,7 @@ class PlaceOnCounterCommand(Command):
         self.counter_loc = None
         self.retries = 0
         self.max_retries = 5
+        self.max_turns = 40  # Reduce timeout
 
     def execute(self, controller: RobotController, bot_id: int) -> None:
         self.turn_count += 1
@@ -758,6 +864,9 @@ class PlaceOnCounterCommand(Command):
 
         bx, by = bot_state['x'], bot_state['y']
         holding = bot_state.get('holding')
+
+        # Track progress
+        self.check_progress(f"{bx}_{by}_{holding is not None}")
 
         if holding is None:
             return
@@ -770,7 +879,7 @@ class PlaceOnCounterCommand(Command):
                 if self.retries < self.max_retries:
                     self.retries += 1
                 else:
-                    print(f"[WARN] PlaceOnCounter: No empty counter found after {self.max_retries} attempts")
+                    print(f"[WARN] PlaceOnCounter: No empty counter found after {self.max_retries} attempts, aborting")
                 return
 
         cx, cy = self.counter_loc
@@ -795,6 +904,11 @@ class PlaceOnCounterCommand(Command):
         next_move = bfs_to_adjacent(controller, (bx, by), self.counter_loc)
         if next_move:
             controller.move(bot_id, next_move[0], next_move[1])
+        else:
+            # Can't reach counter, find another
+            print(f"[WARN] PlaceOnCounter: Counter unreachable, finding alternative")
+            self.counter_loc = None
+            self.retries += 1
 
     def is_complete(self, controller: RobotController, bot_id: int) -> bool:
         bot_state = controller.get_bot_state(bot_id)
@@ -863,6 +977,9 @@ class PickupPlateFromCounterCommand(Command):
     def __init__(self):
         super().__init__()
         self.plate_loc = None
+        self.max_turns = 40  # Reduce timeout
+        self.retries = 0
+        self.max_retries = 3
 
     def execute(self, controller: RobotController, bot_id: int) -> None:
         self.turn_count += 1
@@ -873,34 +990,60 @@ class PickupPlateFromCounterCommand(Command):
         bx, by = bot_state['x'], bot_state['y']
         holding = bot_state.get('holding')
 
+        # Track progress
+        self.check_progress(f"{bx}_{by}_{holding is not None}")
+
         if holding is not None:
             return
 
-        if self.plate_loc is None:
+        if self.plate_loc is None or self.retries > 0:
             # Find plate on counter (item is actual object, not dict)
+            # Find closest plate to current position
             m = controller.get_map(controller.get_team())
+            closest_plate = None
+            min_dist = float('inf')
+
             for x in range(m.width):
                 for y in range(m.height):
                     tile = m.tiles[x][y]
                     if tile.tile_name == "COUNTER":
                         item = getattr(tile, "item", None)
                         if item and item.__class__.__name__ == "Plate":
-                            self.plate_loc = (x, y)
-                            break
-                if self.plate_loc:
-                    break
+                            dist = max(abs(x - bx), abs(y - by))
+                            if dist < min_dist:
+                                min_dist = dist
+                                closest_plate = (x, y)
+
+            self.plate_loc = closest_plate
             if not self.plate_loc:
+                self.retries += 1
+                if self.retries > self.max_retries:
+                    print(f"[WARN] PickupPlateFromCounter: No plate found after {self.max_retries} attempts")
                 return
 
         px, py = self.plate_loc
 
         if max(abs(bx - px), abs(by - py)) <= 1:
-            controller.pickup(bot_id, px, py)
+            # Verify plate is still there
+            tile = controller.get_map(controller.get_team()).tiles[px][py]
+            item = getattr(tile, "item", None)
+            if item and item.__class__.__name__ == "Plate":
+                controller.pickup(bot_id, px, py)
+            else:
+                # Plate disappeared, find another
+                print(f"[WARN] PickupPlateFromCounter: Plate disappeared, searching again")
+                self.plate_loc = None
+                self.retries += 1
             return
 
         next_move = bfs_to_adjacent(controller, (bx, by), self.plate_loc)
         if next_move:
             controller.move(bot_id, next_move[0], next_move[1])
+        else:
+            # Can't reach plate, find another
+            print(f"[WARN] PickupPlateFromCounter: Plate unreachable, finding alternative")
+            self.plate_loc = None
+            self.retries += 1
 
     def is_complete(self, controller: RobotController, bot_id: int) -> bool:
         bot_state = controller.get_bot_state(bot_id)
@@ -1070,7 +1213,8 @@ class AddFoodToPlateCommand(Command):
         self.state = "navigating"
         self.initial_food_count = None
         self.retries = 0
-        self.max_retries = 3
+        self.max_retries = 5
+        self.max_turns = 50  # Reduce timeout
 
     def execute(self, controller: RobotController, bot_id: int) -> None:
         self.turn_count += 1
@@ -1081,24 +1225,40 @@ class AddFoodToPlateCommand(Command):
         bx, by = bot_state['x'], bot_state['y']
         holding = bot_state.get('holding')
 
+        # Track progress
+        self.check_progress(f"{self.state}_{bx}_{by}")
+
         # holding is a dict
         if holding is None or holding.get('type') != 'Plate':
+            print(f"[WARN] AddFoodToPlate: Not holding plate, aborting")
+            self.state = "done"
             return
 
         if self.state == "navigating":
             # Re-find food if needed or retrying
             if self.food_loc is None:
-                # Find food on counter
-                self.food_loc = find_item_on_tile(
-                    controller,
-                    "COUNTER",
-                    lambda item: hasattr(item, 'food_name') and item.food_name == self.food_type.name
-                )
+                # Find closest food on counter
+                m = controller.get_map(controller.get_team())
+                closest_food = None
+                min_dist = float('inf')
+
+                for x in range(m.width):
+                    for y in range(m.height):
+                        tile = m.tiles[x][y]
+                        if tile.tile_name == "COUNTER":
+                            item = getattr(tile, "item", None)
+                            if item and hasattr(item, 'food_name') and item.food_name == self.food_type.name:
+                                dist = max(abs(x - bx), abs(y - by))
+                                if dist < min_dist:
+                                    min_dist = dist
+                                    closest_food = (x, y)
+
+                self.food_loc = closest_food
                 if not self.food_loc:
-                    if self.retries < self.max_retries:
-                        self.retries += 1
-                    else:
-                        print(f"[WARN] AddFoodToPlate: Food {self.food_type.name} not found on counter after {self.max_retries} attempts")
+                    self.retries += 1
+                    if self.retries >= self.max_retries:
+                        print(f"[WARN] AddFoodToPlate: Food {self.food_type.name} not found on counter after {self.max_retries} attempts, aborting")
+                        self.state = "done"
                     return
 
             fx, fy = self.food_loc
@@ -1112,12 +1272,18 @@ class AddFoodToPlateCommand(Command):
                     self.state = "adding"
                 else:
                     # Food disappeared, find it again
+                    print(f"[WARN] AddFoodToPlate: Food disappeared, searching again")
                     self.food_loc = None
                     self.retries += 1
             else:
                 next_move = bfs_to_adjacent(controller, (bx, by), self.food_loc)
                 if next_move:
                     controller.move(bot_id, next_move[0], next_move[1])
+                else:
+                    # Can't reach food, find another
+                    print(f"[WARN] AddFoodToPlate: Food unreachable, finding alternative")
+                    self.food_loc = None
+                    self.retries += 1
 
         elif self.state == "adding":
             fx, fy = self.food_loc
@@ -1139,14 +1305,20 @@ class AddFoodToPlateCommand(Command):
                             self.state = "navigating"
                             self.food_loc = None
                             self.retries += 1
+                            if self.retries >= self.max_retries:
+                                print(f"[WARN] AddFoodToPlate: Too many add failures, aborting")
+                                self.state = "done"
                     else:
-                        print(f"[WARN] AddFoodToPlate: Lost plate after add action")
-                        self.state = "done"  # Can't continue without plate
+                        print(f"[WARN] AddFoodToPlate: Lost plate after add action, aborting")
+                        self.state = "done"
             else:
                 print(f"[WARN] AddFoodToPlate: Food disappeared from counter")
                 self.state = "navigating"
                 self.food_loc = None
                 self.retries += 1
+                if self.retries >= self.max_retries:
+                    print(f"[WARN] AddFoodToPlate: Too many retries, aborting")
+                    self.state = "done"
 
     def is_complete(self, controller: RobotController, bot_id: int) -> bool:
         return self.state == "done"
@@ -1863,9 +2035,22 @@ class BotPlayer:
             self.current_order_id = None  # Clear current order when all commands done
             return
 
+        # Log current command state every 10 turns
+        if current_cmd.turn_count % 10 == 0 and current_cmd.turn_count > 0:
+            print(f"[BOT] Still executing {current_cmd} (turn {current_cmd.turn_count})")
+            # Log specific state for commands with internal state
+            if hasattr(current_cmd, 'state'):
+                print(f"[BOT]   State: {current_cmd.state}")
+            if hasattr(current_cmd, 'retries'):
+                print(f"[BOT]   Retries: {current_cmd.retries}")
+
         # Check if command is stuck (timeout)
         if current_cmd.is_stuck():
             print(f"[BOT] Command STUCK (timeout after {current_cmd.turn_count} turns): {current_cmd}")
+            if hasattr(current_cmd, 'state'):
+                print(f"[BOT]   Final state: {current_cmd.state}")
+            if hasattr(current_cmd, 'stuck_counter'):
+                print(f"[BOT]   Stuck counter: {current_cmd.stuck_counter}")
             print(f"[BOT] Aborting current order {self.current_order_id} due to stuck command")
 
             # Mark order as processed so we don't try again
