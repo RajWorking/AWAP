@@ -249,9 +249,11 @@ class BotPlayer:
         orders = self._active_orders(controller)
         if not orders:
             return None
+        
         current_turn = controller.get_turn()
         team_money = controller.get_team_money(controller.get_team())
         scored = []
+        
         for o in orders:
             foods = self._order_foods(o)
             cost = sum(int(getattr(f, "buy_cost", 0)) for f in foods) + int(ShopCosts.PLATE.buy_cost)
@@ -259,32 +261,86 @@ class BotPlayer:
             penalty = int(o.get("penalty", 0))
             expires = int(o.get("expires_turn", 0))
             remaining_turns = expires - current_turn
+            
+            # Skip already expired orders
+            if remaining_turns <= 0:
+                continue
+            
             has_cooking = any(f.can_cook for f in foods)
-            min_turns_needed = 50 if has_cooking else 10
+            has_chopping = any(f.can_chop for f in foods)
+            
+            # More nuanced minimum turn requirements
+            min_turns_needed = 8
+            min_turns_needed += 8 if has_chopping
+            min_turns_needed += 20 if has_cooking
             if remaining_turns < min_turns_needed:
                 continue
-
+            
+            # Better time estimation
             num_ingredients = len(foods)
             cooking_count = sum(1 for f in foods if f.can_cook)
-            estimated_turns = num_ingredients * 35 + cooking_count * 30
-            if remaining_turns < estimated_turns * 1.2:
+            chopping_count = sum(1 for f in foods if f.can_chop)
+            
+            # More realistic turn estimates (adjust based on actual game dynamics)
+            estimated_turns = (
+                num_ingredients * 20 +      # Base ingredient handling
+                chopping_count * 25 +        # Chopping time
+                cooking_count * 40 +         # Cooking time
+                15                           # Plating and delivery
+            )
+            
+            # Safety buffer - only attempt if we have enough time
+            if remaining_turns < estimated_turns * 1.3:  # 30% buffer
                 continue
-
+            
+            # Calculate effort more accurately
             effort = 0
             for f in foods:
-                effort += 1
+                effort += 1                  # Base handling
                 if f.can_chop:
                     effort += 2
                 if f.can_cook:
                     effort += 3
+            
+            # Check feasibility
             feasible = cost <= team_money
+            
+            # Calculate value metrics
             total_value = reward + penalty
-            adjusted_reward = total_value - effort * 10
-            score = (1 if feasible else 0, adjusted_reward, total_value, -expires, -len(foods))
+            
+            # Reward per effort unit
+            efficiency = total_value / max(effort, 1)
+            
+            # Time pressure factor (higher value as deadline approaches)
+            urgency = 1.0 / max(remaining_turns, 1)
+            
+            # Combined score
+            adjusted_reward = total_value - effort * 8  # Reduced effort penalty
+            
+            # Multi-criteria scoring tuple
+            # Priority: feasible > efficiency > adjusted_reward > urgency > simplicity
+            score = (
+                1 if feasible else 0,           # Must be affordable
+                efficiency,                      # Value per effort
+                adjusted_reward,                 # Net value after effort cost
+                urgency,                         # Time pressure
+                -num_ingredients                 # Prefer simpler orders
+            )
+            
             scored.append((score, o))
+        
         if not scored:
             return None
-        scored.sort(key=lambda item: (-item[0][0], -item[0][1], -item[0][2], item[0][3], item[0][4]))
+        
+        # Sort by priority: feasibility, then efficiency, then other factors
+        scored.sort(key=lambda item: (
+            -item[0][0],  # Feasible first
+            -item[0][1],  # Higher efficiency
+            -item[0][2],  # Higher adjusted reward
+            -item[0][3],  # More urgent
+            item[0][4]    # Fewer ingredients
+        ))
+        
         return scored[0][1]
 
     # ----------------- plate helpers -----------------
