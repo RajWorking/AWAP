@@ -190,7 +190,7 @@ def format_leaderboard(leaderboard: Dict[str, Dict[str, int]]) -> List[str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--bots-dir", default="bots", help="directory containing bot .py files")
+    ap.add_argument("--bots-dir", default="fight", help="directory containing bot .py files")
     ap.add_argument("--maps-dir", default="maps", help="directory containing map .txt files")
     ap.add_argument("--turns", type=int, default=GameConstants.TOTAL_TURNS, help="turn limit per game")
     ap.add_argument("--timeout", type=float, default=0.5, help="per-turn timeout seconds per bot")
