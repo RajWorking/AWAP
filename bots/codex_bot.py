@@ -47,6 +47,18 @@ class BotPlayer:
     def _choose_assembly_counter(self):
         counters = self.tiles.get("COUNTER", [])
         submits = self.tiles.get("SUBMIT", [])
+        boxes = self.tiles.get("BOX", [])
+        if len(counters) == 1 and boxes:
+            if not submits:
+                return boxes[0]
+            best = None
+            best_dist = 10**9
+            for b in boxes:
+                dist = min(max(abs(b[0] - s[0]), abs(b[1] - s[1])) for s in submits)
+                if dist < best_dist:
+                    best_dist = dist
+                    best = b
+            return best
         if not counters:
             return None
         if not submits:
@@ -182,10 +194,18 @@ class BotPlayer:
             cost = sum(int(getattr(f, "buy_cost", 0)) for f in foods) + int(ShopCosts.PLATE.buy_cost)
             reward = int(o.get("reward", 0))
             expires = int(o.get("expires_turn", 0))
+            effort = 0
+            for f in foods:
+                effort += 1
+                if f.can_chop:
+                    effort += 2
+                if f.can_cook:
+                    effort += 3
             feasible = cost <= team_money
-            score = (1 if feasible else 0, reward / max(1, cost), -expires)
+            adjusted_reward = reward - effort * 10
+            score = (1 if feasible else 0, adjusted_reward, reward, -expires, -len(foods))
             scored.append((score, o))
-        scored.sort(key=lambda item: (-item[0][0], -item[0][1], item[0][2]))
+        scored.sort(key=lambda item: (-item[0][0], -item[0][1], -item[0][2], item[0][3], item[0][4]))
         return scored[0][1]
 
     # ----------------- plate helpers -----------------
@@ -340,6 +360,12 @@ class BotPlayer:
 
         bot = controller.get_bot_state(bot_id)
         holding = bot.get("holding") if bot else None
+        if holding is not None and holding.get("type") != "Pan":
+            counter = self._find_empty_counter(controller, bot_id)
+            if counter is not None:
+                ex, ey = counter
+                self._move_or_action(controller, bot_id, ex, ey, lambda: controller.place(bot_id, ex, ey))
+                return False
         if holding and holding.get("type") == "Pan":
             self._move_or_action(
                 controller,
@@ -548,6 +574,12 @@ class BotPlayer:
         if not missing:
             return self._submit_plate(controller, bot_id)
 
+        if role == "cook" and any(
+            FoodType[name].can_cook for name in missing.keys() if name in FoodType.__members__
+        ):
+            if not self._ensure_pan(controller, bot_id):
+                return True
+
         if role == "plate" and self.assembly_counter is not None:
             if not self._ensure_plate_on_counter(controller, bot_id):
                 return True
@@ -734,6 +766,8 @@ class BotPlayer:
                     return False
                 if holding.get("cooked_stage", 0) >= 1:
                     return True
+                if not self._ensure_pan(controller, bot_id):
+                    return False
                 tile = controller.get_tile(controller.get_team(), cx, cy)
                 pan = getattr(tile, "item", None)
                 if not isinstance(pan, Pan) or pan.food is not None:
@@ -798,12 +832,26 @@ class BotPlayer:
         bot_ids = controller.get_team_bot_ids(controller.get_team())
         if not bot_ids:
             return
+        active_orders = self._active_orders(controller)
+        if len(bot_ids) > 1 and len(active_orders) == 1:
+            req = {r.upper() for r in active_orders[0].get("required", [])}
+            if req == {"NOODLES", "MEAT"}:
+                bot_id = bot_ids[0]
+                if not self.single_plan or self.single_plan_idx >= len(self.single_plan):
+                    if active_orders[0].get("order_id") not in self.single_processed_orders:
+                        self.single_processed_orders.add(active_orders[0].get("order_id"))
+                        self.single_plan = self._single_build_plan(active_orders[0])
+                        self.single_plan_idx = 0
+                if self.single_plan:
+                    task = self.single_plan[self.single_plan_idx]
+                    if self._single_step(controller, bot_id, task):
+                        self.single_plan_idx += 1
+                return
         if len(bot_ids) == 1:
             bot_id = bot_ids[0]
             if not self.single_plan or self.single_plan_idx >= len(self.single_plan):
-                orders = self._active_orders(controller)
                 next_order = None
-                for o in orders:
+                for o in active_orders:
                     if o.get("order_id") not in self.single_processed_orders:
                         next_order = o
                         break
