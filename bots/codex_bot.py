@@ -250,6 +250,39 @@ class BotPlayer:
                 continue
         return out
 
+    def _order_signature(self, order) -> Counter:
+        sig = Counter()
+        for ft in self._order_foods(order):
+            sig[(ft.food_name, ft.can_chop, 1 if ft.can_cook else 0)] += 1
+        return sig
+
+    def _plate_signature(self, plate_obj) -> Counter:
+        sig = Counter()
+        if plate_obj is None:
+            return sig
+        if isinstance(plate_obj, Plate):
+            for f in plate_obj.food:
+                if isinstance(f, Food):
+                    sig[(f.food_name, bool(f.chopped), int(f.cooked_stage))] += 1
+            return sig
+        if isinstance(plate_obj, dict):
+            for f in plate_obj.get("food", []) or []:
+                name = f.get("food_name")
+                if name:
+                    sig[(name, bool(f.get("chopped", False)), int(f.get("cooked_stage", 0)))] += 1
+        return sig
+
+    def _find_matching_order_id(self, controller: RobotController, plate_obj) -> Optional[int]:
+        if plate_obj is None:
+            return None
+        plate_sig = self._plate_signature(plate_obj)
+        if not plate_sig:
+            return None
+        for o in self._active_orders(controller):
+            if plate_sig == self._order_signature(o):
+                return o.get("order_id")
+        return None
+
     def _choose_order(self, controller: RobotController, bot_count: int):
         orders = self._active_orders(controller)
         if not orders:
@@ -263,11 +296,15 @@ class BotPlayer:
         scored = []
         for o in orders:
             foods = self._order_foods(o)
+            if not foods:
+                continue
             cost = sum(int(getattr(f, "buy_cost", 0)) for f in foods) + int(ShopCosts.PLATE.buy_cost)
             reward = int(o.get("reward", 0))
             penalty = int(o.get("penalty", 0))
             expires = int(o.get("expires_turn", 0))
             remaining_turns = expires - current_turn
+            if remaining_turns <= 0:
+                continue
             has_cooking = any(f.can_cook for f in foods)
             base_min_turns = 50 if has_cooking else 10
             min_turns_needed = max(12 if has_cooking else 5, int(base_min_turns / speedup))
@@ -276,9 +313,28 @@ class BotPlayer:
 
             num_ingredients = len(foods)
             cooking_count = sum(1 for f in foods if f.can_cook)
-            estimated_turns = (num_ingredients * 35 + cooking_count * 30) / speedup
-            if remaining_turns < estimated_turns * 1.2:
-                continue
+            chop_count = sum(1 for f in foods if f.can_chop)
+            total_value = reward + penalty
+            m = controller.get_map(controller.get_team())
+            map_area = m.width * m.height
+            complex_order = num_ingredients >= 5 or cooking_count >= 2
+            if complex_order:
+                if num_ingredients >= 5 and cooking_count >= 2 and map_area >= 200:
+                    estimated_turns = (num_ingredients * 30 + cooking_count * 25) / speedup
+                    safety = 1.05 if bot_count >= 2 else 1.15
+                    if remaining_turns < estimated_turns * safety:
+                        if remaining_turns < estimated_turns or total_value < 400:
+                            continue
+                else:
+                    estimated_turns = num_ingredients * 35 + cooking_count * 30
+                    if remaining_turns < estimated_turns * 1.2:
+                        if remaining_turns < estimated_turns or total_value < 400:
+                            continue
+            else:
+                estimated_turns = (num_ingredients * 25 + chop_count * 10 + cooking_count * 20) / speedup
+                safety = 1.1 if bot_count >= 2 else 1.2
+                if remaining_turns < estimated_turns * safety:
+                    continue
 
             effort = 0
             for f in foods:
@@ -448,6 +504,24 @@ class BotPlayer:
                 if self._move_or_action(controller, bot_id, sx, sy, take_plate):
                     return False
 
+        counters = self.tiles.get("COUNTER", [])
+        if counters and bot:
+            bx, by = bot["x"], bot["y"]
+            best = None
+            best_dist = 10**9
+            for x, y in counters:
+                tile = controller.get_tile(controller.get_team(), x, y)
+                item = getattr(tile, "item", None)
+                if isinstance(item, Plate) and not item.dirty:
+                    dist = max(abs(bx - x), abs(by - y))
+                    if dist < best_dist:
+                        best_dist = dist
+                        best = (x, y)
+            if best:
+                px, py = best
+                if self._move_or_action(controller, bot_id, px, py, lambda: controller.pickup(bot_id, px, py)):
+                    return False
+
         shop = self._nearest(self.tiles.get("SHOP", []), bot["x"], bot["y"]) if bot else None
         if shop and self._move_or_action(
             controller,
@@ -480,13 +554,16 @@ class BotPlayer:
             )
 
         ax, ay = self.assembly_counter
-        return self._move_or_action(
-            controller,
-            bot_id,
-            ax,
-            ay,
-            lambda: controller.pickup(bot_id, ax, ay),
-        )
+        tile = controller.get_tile(controller.get_team(), ax, ay)
+        if tile and isinstance(getattr(tile, "item", None), Plate):
+            return self._move_or_action(
+                controller,
+                bot_id,
+                ax,
+                ay,
+                lambda: controller.pickup(bot_id, ax, ay),
+            )
+        return False
 
     def _clear_hands(self, controller: RobotController, bot_id: int) -> bool:
         bot = controller.get_bot_state(bot_id)
@@ -1138,9 +1215,26 @@ class BotPlayer:
         plate_counter = Counter()
         if plate_info is not None:
             plate_counter = self._plate_food_counter(plate_info[2])
+        if (plate_info is None or not plate_counter) and len(active_orders) > 1:
+            better = self._choose_order(controller, len(bot_ids))
+            if better is not None and better.get("order_id") != self.current_order_id:
+                self.current_order_id = better.get("order_id")
+                order = better
+                required = Counter([f.food_name for f in self._order_foods(order)])
+                plate_info = self._get_plate_location(controller, bot_ids)
+                plate_counter = self._plate_food_counter(plate_info[2]) if plate_info is not None else Counter()
+        if plate_info is not None:
+            matching_order_id = self._find_matching_order_id(controller, plate_info[2])
+            if matching_order_id is not None and matching_order_id != self.current_order_id:
+                self.current_order_id = matching_order_id
+                order = next((o for o in active_orders if o.get("order_id") == matching_order_id), order)
+                required = Counter([f.food_name for f in self._order_foods(order)])
+                plate_counter = self._plate_food_counter(plate_info[2])
+        else:
+            matching_order_id = None
         extra = plate_counter - required
-        bad_plate = bool(extra)
         missing = required - plate_counter
+        bad_plate = bool(extra) or (plate_info is not None and not missing and matching_order_id is None)
         required_names = set(required.keys())
         inflight_tiles = self._collect_inflight_food(controller, required_names)
         holdings = self._collect_holding_food(controller, bot_ids, required_names)
@@ -1160,6 +1254,18 @@ class BotPlayer:
 
         plan_missing = missing - inflight_tiles - holding_counter
         strict_roles = len(bot_ids) > 1 and sum(missing.values()) >= len(bot_ids)
+        if strict_roles:
+            role_set = {self.role_by_bot.get(bid, "runner") for bid in bot_ids}
+            for name in missing.keys():
+                if name not in FoodType.__members__:
+                    continue
+                ft = FoodType[name]
+                if ft.can_cook and "cook" not in role_set:
+                    strict_roles = False
+                    break
+                if ft.can_chop and not ft.can_cook and "prep" not in role_set:
+                    strict_roles = False
+                    break
         assignments: Dict[int, Optional[FoodType]] = {}
         for bid in bots_by_role:
             role = self.role_by_bot.get(bid, "runner")
