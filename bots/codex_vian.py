@@ -249,46 +249,43 @@ class BotPlayer:
         orders = self._active_orders(controller)
         if not orders:
             return None
+    
         current_turn = controller.get_turn()
         team_money = controller.get_team_money(controller.get_team())
         scored = []
+    
         for o in orders:
             foods = self._order_foods(o)
-            cost = sum(int(getattr(f, "buy_cost", 0)) for f in foods) + int(ShopCosts.PLATE.buy_cost)
-            reward = int(o.get("reward", 0))
-            penalty = int(o.get("penalty", 0))
-            created = int(o.get("created_turn", 0))
+    
+            food_cost = sum(int(getattr(f, "buy_cost", 0)) for f in foods)
+            cost = food_cost + int(ShopCosts.PLATE.buy_cost)
+    
+            reward = abs(int(o.get("reward", 0))) + abs(int(o.get("penalty", 0)))
             expires = int(o.get("expires_turn", 0))
             remaining_turns = expires - current_turn
-            has_cooking = any(f.can_cook for f in foods)
-            # min_turns_needed = 40 if has_cooking else 20
-            # if remaining_turns < min_turns_needed:
-            #     continue
-
-            num_ingredients = len(foods)
-            cooking_count = sum(1 for f in foods if f.can_cook)
-            estimated_turns = num_ingredients * 20 + cooking_count * 20
-            # if remaining_turns < estimated_turns * 1.3:
+    
             if remaining_turns < 70:
                 continue
-
-            effort = 0
-            for f in foods:
-                effort += 1
-                if f.can_chop:
-                    effort += 2
-                if f.can_cook:
-                    effort += 3
-            
-            total_value = reward + penalty
-            valuable = cost < total_value
-            adjusted_reward = total_value - effort * 10
-            score = (1 if valuable else 0, adjusted_reward, total_value, -expires - created, -len(foods))
-            scored.append((score, o))
+            if reward < cost:
+                continue
+    
+            cooking_count = sum(1 for f in foods if f.can_cook)
+            chopping_count = sum(1 for f in foods if f.can_chop)
+    
+            estimated_turns = len(foods) * 30 + cooking_count * 20 + chopping_count * 5
+    
+            if estimated_turns > remaining_turns * 1.5:
+                continue
+    
+            adjusted_reward = (reward - cost) * (remaining_turns / max(estimated_turns, 1))
+            scored.append((adjusted_reward, o))
+    
         if not scored:
             return None
-        scored.sort(key=lambda item: (-item[0][0], -item[0][1], -item[0][2], item[0][3], item[0][4]))
+    
+        scored.sort(key=lambda item: item[0], reverse=True)
         return scored[0][1]
+
 
     # ----------------- plate helpers -----------------
     def _plate_food_counter(self, plate_obj) -> Counter:
