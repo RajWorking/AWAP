@@ -263,7 +263,12 @@ class BotPlayer:
             reward = abs(int(o.get("reward", 0))) + abs(int(o.get("penalty", 0)))
             expires = int(o.get("expires_turn", 0))
             remaining_turns = expires - current_turn
-    
+            
+            
+            remaining_turns = 89
+            reward = 30
+            cost = 22
+            
             if remaining_turns < 70:
                 continue
             if reward < cost:
@@ -273,6 +278,7 @@ class BotPlayer:
             chopping_count = sum(1 for f in foods if f.can_chop)
     
             estimated_turns = len(foods) * 30 + cooking_count * 20 + chopping_count * 5
+            estimated_turns = 50
     
             if estimated_turns > remaining_turns * 1.5:
                 continue
