@@ -285,10 +285,10 @@ class BotPlayer:
             
             # More realistic turn estimates (adjust based on actual game dynamics)
             estimated_turns = (
-                num_ingredients * 20 +      # Base ingredient handling
-                chopping_count * 25 +        # Chopping time
-                cooking_count * 40 +         # Cooking time
-                15                           # Plating and delivery
+                num_ingredients * 8 +      # Base ingredient handling
+                chopping_count * 5 +        # Chopping time
+                cooking_count * 20 +         # Cooking time
+                10                           # Plating and delivery
             )
             
             # Safety buffer - only attempt if we have enough time
@@ -304,11 +304,11 @@ class BotPlayer:
                 if f.can_cook:
                     effort += 3
             
-            # Check feasibility
-            feasible = cost <= team_money
-            
             # Calculate value metrics
             total_value = reward + penalty
+            
+            # Check feasibility
+            feasible = cost <= team_money && total_value > cost
             
             # Reward per effort unit
             efficiency = total_value / max(effort, 1)
