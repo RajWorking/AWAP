@@ -3,3 +3,4 @@ __pycache__
 .venv
 arena.log
 replay_path.json
+.claude/
