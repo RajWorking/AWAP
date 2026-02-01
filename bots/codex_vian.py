@@ -259,16 +259,16 @@ class BotPlayer:
             penalty = int(o.get("penalty", 0))
             created = int(o.get("created_turn", 0))
             expires = int(o.get("expires_turn", 0))
-            remaining_turns = expires + created - current_turn
+            remaining_turns = expires - current_turn
             has_cooking = any(f.can_cook for f in foods)
-            min_turns_needed = 50 if has_cooking else 10
+            min_turns_needed = 80 if has_cooking else 50
             if remaining_turns < min_turns_needed:
                 continue
 
             num_ingredients = len(foods)
             cooking_count = sum(1 for f in foods if f.can_cook)
             estimated_turns = num_ingredients * 20 + cooking_count * 30
-            if remaining_turns < estimated_turns * 1.2:
+            if remaining_turns < estimated_turns * 1.5:
                 continue
 
             effort = 0
