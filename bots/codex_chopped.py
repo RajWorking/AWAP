@@ -271,8 +271,10 @@ class BotPlayer:
             
             # More nuanced minimum turn requirements
             min_turns_needed = 8
-            min_turns_needed += 8 if has_chopping
-            min_turns_needed += 20 if has_cooking
+            if has_chopping:
+                min_turns_needed += 8
+            if has_cooking:
+                min_turns_needed += 20 
             if remaining_turns < min_turns_needed:
                 continue
             
