@@ -23,6 +23,68 @@ class BotPlayer:
         self.single_plan: List[Dict] = []
         self.single_plan_idx = 0
         self.single_processed_orders = set()
+        self._seen_switch = False
+
+    def _refresh_from_controller(self, controller: RobotController, bot_pos: Optional[Tuple[int, int]] = None):
+        info = controller.get_switch_info()
+        if info.get("my_team_switched") and not self._seen_switch:
+            self._seen_switch = True
+            self.map = controller.get_map(controller.get_team())
+            self._scan_tiles()
+            self.assembly_counter = None
+            self.prep_counter = None
+            self.cooker_tile = None
+            self.turn_initialized = False
+            return
+
+        if self.map.width != controller.get_map(controller.get_team()).width or self.map.height != controller.get_map(controller.get_team()).height:
+            self.map = controller.get_map(controller.get_team())
+            self._scan_tiles()
+            self.assembly_counter = None
+            self.prep_counter = None
+            self.cooker_tile = None
+            self.turn_initialized = False
+
+    def _reachable_walkable(self, controller: RobotController, start: Tuple[int, int]):
+        m = controller.get_map(controller.get_team())
+        if not m.in_bounds(start[0], start[1]) or not m.is_tile_walkable(start[0], start[1]):
+            return set()
+        queue = deque([start])
+        visited = {start}
+        while queue:
+            cx, cy = queue.popleft()
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    if dx == 0 and dy == 0:
+                        continue
+                    nx, ny = cx + dx, cy + dy
+                    if (nx, ny) in visited:
+                        continue
+                    if 0 <= nx < m.width and 0 <= ny < m.height and m.is_tile_walkable(nx, ny):
+                        visited.add((nx, ny))
+                        queue.append((nx, ny))
+        return visited
+
+    def _target_accessible(self, controller: RobotController, target: Tuple[int, int], reachable: set) -> bool:
+        m = controller.get_map(controller.get_team())
+        tx, ty = target
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                if dx == 0 and dy == 0:
+                    continue
+                nx, ny = tx + dx, ty + dy
+                if 0 <= nx < m.width and 0 <= ny < m.height and m.is_tile_walkable(nx, ny):
+                    if (nx, ny) in reachable:
+                        return True
+        return False
+
+    def _choose_accessible(self, controller: RobotController, positions, start: Tuple[int, int]):
+        if not positions:
+            return None
+        reachable = self._reachable_walkable(controller, start)
+        accessible = [p for p in positions if self._target_accessible(controller, p, reachable)]
+        candidates = accessible if accessible else positions
+        return self._nearest(candidates, start[0], start[1])
 
     # ----------------- map helpers -----------------
     def _scan_tiles(self):
@@ -187,13 +249,27 @@ class BotPlayer:
         orders = self._active_orders(controller)
         if not orders:
             return None
+        current_turn = controller.get_turn()
         team_money = controller.get_team_money(controller.get_team())
         scored = []
         for o in orders:
             foods = self._order_foods(o)
             cost = sum(int(getattr(f, "buy_cost", 0)) for f in foods) + int(ShopCosts.PLATE.buy_cost)
             reward = int(o.get("reward", 0))
+            penalty = int(o.get("penalty", 0))
             expires = int(o.get("expires_turn", 0))
+            remaining_turns = expires - current_turn
+            has_cooking = any(f.can_cook for f in foods)
+            min_turns_needed = 50 if has_cooking else 10
+            if remaining_turns < min_turns_needed:
+                continue
+
+            num_ingredients = len(foods)
+            cooking_count = sum(1 for f in foods if f.can_cook)
+            estimated_turns = num_ingredients * 35 + cooking_count * 30
+            if remaining_turns < estimated_turns * 1.2:
+                continue
+
             effort = 0
             for f in foods:
                 effort += 1
@@ -202,9 +278,12 @@ class BotPlayer:
                 if f.can_cook:
                     effort += 3
             feasible = cost <= team_money
-            adjusted_reward = reward - effort * 10
-            score = (1 if feasible else 0, adjusted_reward, reward, -expires, -len(foods))
+            total_value = reward + penalty
+            adjusted_reward = total_value - effort * 10
+            score = (1 if feasible else 0, adjusted_reward, total_value, -expires, -len(foods))
             scored.append((score, o))
+        if not scored:
+            return None
         scored.sort(key=lambda item: (-item[0][0], -item[0][1], -item[0][2], item[0][3], item[0][4]))
         return scored[0][1]
 
@@ -309,6 +388,30 @@ class BotPlayer:
             ay,
             lambda: controller.pickup(bot_id, ax, ay),
         )
+
+    def _clear_hands(self, controller: RobotController, bot_id: int) -> bool:
+        bot = controller.get_bot_state(bot_id)
+        if not bot:
+            return False
+        holding = bot.get("holding")
+        if holding is None:
+            return False
+
+        bx, by = bot["x"], bot["y"]
+        if holding.get("type") == "Plate":
+            target = self._nearest(self.tiles.get("COUNTER", []), bx, by)
+            if target is None:
+                target = self._nearest(self.tiles.get("BOX", []), bx, by)
+            if target:
+                tx, ty = target
+                return self._move_or_action(controller, bot_id, tx, ty, lambda: controller.place(bot_id, tx, ty))
+            return False
+
+        trash = self._nearest(self.tiles.get("TRASH", []), bx, by)
+        if trash:
+            tx, ty = trash
+            return self._move_or_action(controller, bot_id, tx, ty, lambda: controller.trash(bot_id, tx, ty))
+        return False
 
     # ----------------- item helpers -----------------
     def _food_needed(self, missing: Counter, name: str) -> bool:
@@ -657,16 +760,26 @@ class BotPlayer:
         return plan
 
     def _single_get_targets(self, controller: RobotController):
+        bot_ids = controller.get_team_bot_ids(controller.get_team())
+        bot = controller.get_bot_state(bot_ids[0]) if bot_ids else None
+        bx, by = (bot["x"], bot["y"]) if bot else (0, 0)
         if self.assembly_counter is None:
             self.assembly_counter = self._choose_assembly_counter()
+        if self.assembly_counter is not None:
+            self.assembly_counter = self._choose_accessible(controller, [self.assembly_counter], (bx, by)) or self.assembly_counter
         if self.prep_counter is None:
             self.prep_counter = self._choose_prep_counter()
+        if self.prep_counter is not None:
+            self.prep_counter = self._choose_accessible(controller, [self.prep_counter], (bx, by)) or self.prep_counter
         if self.cooker_tile is None:
             self.cooker_tile = self._choose_cooker()
-        sink = self._nearest(self.tiles.get("SINK", []), *(self.assembly_counter or (0, 0)))
-        sinktable = self._nearest(self.tiles.get("SINKTABLE", []), *(self.assembly_counter or (0, 0)))
-        shop = self._nearest(self.tiles.get("SHOP", []), *(self.assembly_counter or (0, 0)))
-        submit = self._nearest(self.tiles.get("SUBMIT", []), *(self.assembly_counter or (0, 0)))
+        if self.cooker_tile is not None:
+            self.cooker_tile = self._choose_accessible(controller, [self.cooker_tile], (bx, by)) or self.cooker_tile
+        anchor = self.assembly_counter or (bx, by)
+        sink = self._nearest(self.tiles.get("SINK", []), *anchor)
+        sinktable = self._nearest(self.tiles.get("SINKTABLE", []), *anchor)
+        shop = self._nearest(self.tiles.get("SHOP", []), *anchor)
+        submit = self._nearest(self.tiles.get("SUBMIT", []), *anchor)
         return sink, sinktable, shop, submit
 
     def _single_step(self, controller: RobotController, bot_id: int, task: Dict) -> bool:
@@ -832,6 +945,9 @@ class BotPlayer:
         bot_ids = controller.get_team_bot_ids(controller.get_team())
         if not bot_ids:
             return
+        bot0 = controller.get_bot_state(bot_ids[0])
+        bot0_pos = (bot0["x"], bot0["y"]) if bot0 else (0, 0)
+        self._refresh_from_controller(controller, bot0_pos)
         active_orders = self._active_orders(controller)
         if len(bot_ids) > 1 and len(active_orders) == 1:
             req = {r.upper() for r in active_orders[0].get("required", [])}
@@ -850,6 +966,9 @@ class BotPlayer:
         if len(bot_ids) == 1:
             bot_id = bot_ids[0]
             if not self.single_plan or self.single_plan_idx >= len(self.single_plan):
+                if self._clear_hands(controller, bot_id):
+                    return
+            if not self.single_plan or self.single_plan_idx >= len(self.single_plan):
                 next_order = None
                 for o in active_orders:
                     if o.get("order_id") not in self.single_processed_orders:
@@ -867,10 +986,28 @@ class BotPlayer:
             return
 
         if not self.turn_initialized:
-            self.assembly_counter = self._choose_assembly_counter()
-            self.prep_counter = self._choose_prep_counter()
-            self.cooker_tile = self._choose_cooker()
+            preferred_assembly = self._choose_assembly_counter()
+            if preferred_assembly is not None:
+                self.assembly_counter = self._choose_accessible(controller, [preferred_assembly], bot0_pos) or preferred_assembly
+            else:
+                self.assembly_counter = self._choose_accessible(
+                    controller, self.tiles.get("COUNTER", []) + self.tiles.get("BOX", []), bot0_pos
+                )
+            self.prep_counter = self._choose_accessible(controller, self.tiles.get("COUNTER", []), bot0_pos)
+            self.cooker_tile = self._choose_accessible(controller, self.tiles.get("COOKER", []), bot0_pos)
             self.turn_initialized = True
+        else:
+            if self.assembly_counter is not None:
+                if not self._target_accessible(controller, self.assembly_counter, self._reachable_walkable(controller, bot0_pos)):
+                    self.assembly_counter = self._choose_accessible(
+                        controller, self.tiles.get("COUNTER", []) + self.tiles.get("BOX", []), bot0_pos
+                    )
+            if self.prep_counter is not None:
+                if not self._target_accessible(controller, self.prep_counter, self._reachable_walkable(controller, bot0_pos)):
+                    self.prep_counter = self._choose_accessible(controller, self.tiles.get("COUNTER", []), bot0_pos)
+            if self.cooker_tile is not None:
+                if not self._target_accessible(controller, self.cooker_tile, self._reachable_walkable(controller, bot0_pos)):
+                    self.cooker_tile = self._choose_accessible(controller, self.tiles.get("COOKER", []), bot0_pos)
 
         self._assign_roles(controller, bot_ids)
 
