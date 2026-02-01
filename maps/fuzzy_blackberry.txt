@@ -1,0 +1,17 @@
+####################
+#....S..........T..#
+#$.................#
+#................b.#
+#..................#
+#................bU#
+#.C.K.......RC.....#
+####################
+
+SWITCH: turn=150 duration=100
+
+ORDERS:
+start=0  duration=157  required=ONIONS  reward=247 penalty=4
+start=50  duration=191  required=MEAT,ONIONS  reward=403 penalty=5
+start=100  duration=200  required=ONIONS  reward=317 penalty=2
+start=150  duration=150  required=EGG,NOODLES  reward=637 penalty=3
+start=200  duration=100  required=EGG,NOODLES  reward=426 penalty=3

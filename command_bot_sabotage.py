@@ -867,6 +867,7 @@ class SubmitOrderCommand(Command):
         self.order_id = order_id  # Keep for reference, but not used in submit()
         self.submit_loc = None
         self.failed_attempts = 0  # Track failed submit attempts
+        self.dropping_failed_plate = False  # Track if we're dropping a failed plate
 
     def execute(self, controller: RobotController, bot_id: int) -> None:
         bot_state = controller.get_bot_state(bot_id)
@@ -888,9 +889,22 @@ class SubmitOrderCommand(Command):
             if holding and holding.get('type') == 'Plate':
                 # Check if we've been stuck trying to submit for too long
                 if self.failed_attempts >= 3:
+                    self.dropping_failed_plate = True
                     print(f"[SUBMIT ERROR] Failed to submit {self.failed_attempts} times - plate doesn't match any order!")
-                    # Trash the plate by placing it anywhere (it will be cleaned up later)
-                    # Don't call submit again
+                    # Drop the failed plate in a box so we can continue
+                    box_loc = find_empty_tile(controller, "BOX")
+                    if not box_loc:
+                        box_loc = find_tile(controller, "BOX")
+                    if box_loc:
+                        bx_loc, by_loc = box_loc
+                        if max(abs(bx - bx_loc), abs(by - by_loc)) <= 1:
+                            controller.place(bot_id, bx_loc, by_loc)
+                            print(f"[SUBMIT ERROR] Dropped failed plate in box at ({bx_loc},{by_loc})")
+                        else:
+                            # Navigate to box
+                            next_move = bfs_to_adjacent(controller, (bx, by), box_loc)
+                            if next_move:
+                                controller.move(bot_id, next_move[0], next_move[1])
                     return
 
                 # submit() automatically matches plate to orders
@@ -908,10 +922,15 @@ class SubmitOrderCommand(Command):
         bot_state = controller.get_bot_state(bot_id)
         if not bot_state:
             return False
-        # Submission complete when we're no longer holding the plate
-        # OR if we've failed too many times (give up)
-        if self.failed_attempts >= 3:
-            return True
+
+        # If we're dropping a failed plate, ONLY complete when hands are empty
+        if self.dropping_failed_plate:
+            hands_empty = bot_state.get('holding') is None
+            if hands_empty:
+                print(f"[SUBMIT] Successfully dropped failed plate, hands now empty")
+            return hands_empty
+
+        # Normal submission complete when we're no longer holding the plate
         return bot_state.get('holding') is None
 
     def __str__(self) -> str:
@@ -1145,7 +1164,7 @@ class BotPlayer:
         self.cleaning_workspace = False  # Track if we're cleaning up after expired order
         self.sabotage_mode = False  # Track if we're in enemy kitchen sabotaging
         self.has_switched = False  # Track if we've already switched once
-        self.sabotage_target_turn = 250  # Turn to switch when window opens
+        self.sabotage_target_turn = None  # Will be calculated as window_end_turn - 25
         self.returned_from_sabotage = False  # Track if we've returned and need cleanup
         self.plates_placed = 0  # Track how many plates we've placed for sabotage
         self.sabotage_stuck_counter = 0  # Track how many turns we've been stuck
@@ -1304,11 +1323,16 @@ class BotPlayer:
         bot_id = bots[0]
 
         # SABOTAGE LOGIC: Always use Bot 0 for switching to enemy map
+        # Calculate target turn if not set yet (switch with 25 turns left in sabotage window)
+        if self.sabotage_target_turn is None and switch_info['window_active']:
+            self.sabotage_target_turn = switch_info['window_end_turn'] - 25
+            print(f"[SABOTAGE] Planning to switch at turn {self.sabotage_target_turn} (25 turns before window ends)")
+
         # IMPORTANT: Only switch when bot 0 isn't holding anything
         bot0_state = controller.get_bot_state(bots[0])
         bot0_holding = bot0_state.get('holding') if bot0_state else None
 
-        if not self.has_switched and current_turn >= self.sabotage_target_turn and controller.can_switch_maps():
+        if not self.has_switched and self.sabotage_target_turn is not None and current_turn >= self.sabotage_target_turn and controller.can_switch_maps():
             # Only switch if Bot 0's hands are empty
             if bot0_holding is None:
                 print(f"[SABOTAGE] Turn {current_turn}: Bot 0 switching to enemy map for sabotage!")
@@ -1564,10 +1588,12 @@ class BotPlayer:
                         if max(abs(bx - cx), abs(by - cy)) <= 1:
                             controller.place(bot_id, cx, cy)
                             print(f"[BOT] Placed {holding_type}, hands now free")
+                            return  # Return immediately after placing to avoid starting new order in same turn
                         else:
                             next_move = bfs_to_adjacent(controller, (bx, by), target_loc)
                             if next_move:
                                 controller.move(bot_id, next_move[0], next_move[1])
+                        return  # Always return when handling plate/pan
                 else:
                     # For other items (Food), trash them
                     print(f"[BOT] Holding {holding_type}, navigating to trash")

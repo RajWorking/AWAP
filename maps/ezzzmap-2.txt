@@ -1,0 +1,25 @@
+################
+#BKCCCCCCCCCCKB#
+#K............K#
+#K............K#
+#..............#
+#..............#
+#RTS$UCCCCU$STR#
+################
+
+SWITCH: turn=10 duration=5
+
+ORDERS:
+start=1  duration=1000  required=EGG           reward=10000 penalty=0
+start=1  duration=1000  required=MEAT           reward=10000 penalty=0
+start=1  duration=1000  required=NOODLES           reward=10000 penalty=0
+start=1  duration=1000  required=MEAT           reward=10000 penalty=0
+start=1  duration=1000  required=EGG           reward=10000 penalty=0
+start=1  duration=1000  required=EGG           reward=10000 penalty=0
+start=1  duration=1000  required=EGG           reward=10000 penalty=0
+start=1  duration=1000  required=EGG           reward=10000 penalty=0
+start=1  duration=1000  required=EGG           reward=10000 penalty=0
+start=1  duration=1000  required=EGG           reward=10000 penalty=0
+start=1  duration=1000  required=EGG           reward=10000 penalty=0
+start=1  duration=1000  required=EGG           reward=10000 penalty=0
+start=1  duration=1000  required=EGG           reward=10000 penalty=0
