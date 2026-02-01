@@ -110,6 +110,8 @@ class BotPlayer:
         counters = self.tiles.get("COUNTER", [])
         submits = self.tiles.get("SUBMIT", [])
         boxes = self.tiles.get("BOX", [])
+        shops = self.tiles.get("SHOP", [])
+        cookers = self.tiles.get("COOKER", [])
         if len(counters) == 1 and boxes:
             if not submits:
                 return boxes[0]
@@ -126,11 +128,14 @@ class BotPlayer:
         if not submits:
             return counters[0]
         best = None
-        best_dist = 10**9
+        best_score = 10**9
         for c in counters:
-            dist = min(max(abs(c[0] - s[0]), abs(c[1] - s[1])) for s in submits)
-            if dist < best_dist:
-                best_dist = dist
+            submit_dist = min(max(abs(c[0] - s[0]), abs(c[1] - s[1])) for s in submits) if submits else 0
+            shop_dist = min(max(abs(c[0] - s[0]), abs(c[1] - s[1])) for s in shops) if shops else 0
+            cooker_dist = min(max(abs(c[0] - s[0]), abs(c[1] - s[1])) for s in cookers) if cookers else 0
+            score = submit_dist * 2 + shop_dist + cooker_dist
+            if score < best_score:
+                best_score = score
                 best = c
         return best
 
@@ -245,12 +250,16 @@ class BotPlayer:
                 continue
         return out
 
-    def _choose_order(self, controller: RobotController):
+    def _choose_order(self, controller: RobotController, bot_count: int):
         orders = self._active_orders(controller)
         if not orders:
             return None
         current_turn = controller.get_turn()
         team_money = controller.get_team_money(controller.get_team())
+        bot_count = max(1, bot_count)
+        speedup = 1.0 + 0.6 * (bot_count - 1)
+        if speedup > 2.5:
+            speedup = 2.5
         scored = []
         for o in orders:
             foods = self._order_foods(o)
@@ -260,13 +269,14 @@ class BotPlayer:
             expires = int(o.get("expires_turn", 0))
             remaining_turns = expires - current_turn
             has_cooking = any(f.can_cook for f in foods)
-            min_turns_needed = 50 if has_cooking else 10
+            base_min_turns = 50 if has_cooking else 10
+            min_turns_needed = max(12 if has_cooking else 5, int(base_min_turns / speedup))
             if remaining_turns < min_turns_needed:
                 continue
 
             num_ingredients = len(foods)
             cooking_count = sum(1 for f in foods if f.can_cook)
-            estimated_turns = num_ingredients * 35 + cooking_count * 30
+            estimated_turns = (num_ingredients * 35 + cooking_count * 30) / speedup
             if remaining_turns < estimated_turns * 1.2:
                 continue
 
@@ -303,6 +313,95 @@ class BotPlayer:
                 if name:
                     counter[name] += 1
         return counter
+
+    def _collect_inflight_food(self, controller: RobotController, required_names: set) -> Counter:
+        inflight = Counter()
+        if not required_names:
+            return inflight
+
+        for (x, y) in self.tiles.get("COUNTER", []):
+            tile = controller.get_tile(controller.get_team(), x, y)
+            item = getattr(tile, "item", None)
+            if isinstance(item, Food) and item.food_name in required_names and item.cooked_stage < 2:
+                inflight[item.food_name] += 1
+
+        for (x, y) in self.tiles.get("COOKER", []):
+            tile = controller.get_tile(controller.get_team(), x, y)
+            pan = getattr(tile, "item", None)
+            food = pan.food if isinstance(pan, Pan) else None
+            if isinstance(food, Food) and food.food_name in required_names and food.cooked_stage < 2:
+                inflight[food.food_name] += 1
+
+        return inflight
+
+    def _collect_holding_food(self, controller: RobotController, bot_ids: List[int], required_names: set):
+        holdings = []
+        if not required_names:
+            return holdings
+        for bid in bot_ids:
+            bot = controller.get_bot_state(bid)
+            if not bot:
+                continue
+            holding = bot.get("holding")
+            if holding and holding.get("type") == "Food":
+                name = holding.get("food_name")
+                if name and name in required_names:
+                    holdings.append(
+                        {
+                            "bot_id": bid,
+                            "name": name,
+                            "cooked_stage": int(holding.get("cooked_stage", 0)),
+                            "chopped": bool(holding.get("chopped", False)),
+                            "pos": (bot["x"], bot["y"]),
+                        }
+                    )
+        return holdings
+
+    def _select_holdings_to_keep(
+        self,
+        holdings: List[Dict],
+        required: Counter,
+        plate_counter: Counter,
+        inflight_tiles: Counter,
+    ):
+        keep_bots = set()
+        kept_counter = Counter()
+        if not holdings:
+            return keep_bots, kept_counter
+
+        by_name: Dict[str, List[Dict]] = {}
+        for h in holdings:
+            by_name.setdefault(h["name"], []).append(h)
+
+        ax, ay = self.assembly_counter if self.assembly_counter is not None else (None, None)
+
+        for name, group in by_name.items():
+            needed = required.get(name, 0) - plate_counter.get(name, 0) - inflight_tiles.get(name, 0)
+            if needed <= 0:
+                continue
+
+            candidates = [g for g in group if g["cooked_stage"] < 2]
+            if not candidates:
+                continue
+
+            def score(entry):
+                cooked_stage = entry["cooked_stage"]
+                cooked_score = 2 if cooked_stage == 1 else 1 if cooked_stage == 0 else 0
+                chopped_score = 1 if entry["chopped"] else 0
+                dist_score = 0
+                if ax is not None:
+                    dist_score = -max(abs(entry["pos"][0] - ax), abs(entry["pos"][1] - ay))
+                return (cooked_score, chopped_score, dist_score)
+
+            candidates.sort(key=score, reverse=True)
+            for entry in candidates:
+                if needed <= 0:
+                    break
+                keep_bots.add(entry["bot_id"])
+                kept_counter[name] += 1
+                needed -= 1
+
+        return keep_bots, kept_counter
 
     def _get_plate_location(self, controller: RobotController, bot_ids: List[int]):
         if self.assembly_counter is not None:
@@ -509,13 +608,16 @@ class BotPlayer:
             return self._move_or_action(controller, bot_id, cx, cy, lambda: controller.take_from_pan(bot_id, cx, cy))
         return False
 
-    def _find_food_on_counters(self, controller: RobotController, missing: Counter):
+    def _find_food_on_counters(self, controller: RobotController, missing: Counter, bot_pos: Optional[Tuple[int, int]] = None):
         found = []
         for (x, y) in self.tiles.get("COUNTER", []):
             tile = controller.get_tile(controller.get_team(), x, y)
             item = getattr(tile, "item", None)
             if isinstance(item, Food) and self._food_needed(missing, item.food_name):
                 found.append((x, y, item))
+        if bot_pos is not None:
+            bx, by = bot_pos
+            found.sort(key=lambda item: max(abs(item[0] - bx), abs(item[1] - by)))
         return found
 
     # ----------------- role logic -----------------
@@ -566,32 +668,38 @@ class BotPlayer:
     def _pick_food_for_role(self, missing: Counter, role: str, strict_roles: bool) -> Optional[FoodType]:
         if not missing:
             return None
-        candidates = []
-        for name, count in missing.items():
-            if count <= 0:
-                continue
-            try:
-                ft = FoodType[name]
-            except Exception:
-                continue
-            if strict_roles:
-                if ft.can_cook and role not in {"cook"}:
+        def build_candidates(apply_roles: bool):
+            items = []
+            for name, count in missing.items():
+                if count <= 0:
                     continue
-                if ft.can_chop and not ft.can_cook and role not in {"prep"}:
+                try:
+                    ft = FoodType[name]
+                except Exception:
                     continue
-                if (not ft.can_chop and not ft.can_cook) and role not in {"plate", "runner", "prep", "cook"}:
-                    continue
-            steps = 1 + (1 if ft.can_chop else 0) + (1 if ft.can_cook else 0)
-            bonus = 0
-            if role == "cook" and ft.can_cook:
-                bonus += 3
-            if role == "prep" and ft.can_chop:
-                bonus += 3
-            if role == "plate" and (not ft.can_chop and not ft.can_cook):
-                bonus += 3
-            if role == "runner":
-                bonus += 1
-            candidates.append((bonus, -steps, ft.buy_cost, ft))
+                if apply_roles:
+                    if ft.can_cook and role not in {"cook"}:
+                        continue
+                    if ft.can_chop and not ft.can_cook and role not in {"prep"}:
+                        continue
+                    if (not ft.can_chop and not ft.can_cook) and role not in {"plate", "runner", "prep", "cook"}:
+                        continue
+                steps = 1 + (1 if ft.can_chop else 0) + (1 if ft.can_cook else 0)
+                bonus = 0
+                if role == "cook" and ft.can_cook:
+                    bonus += 3
+                if role == "prep" and ft.can_chop:
+                    bonus += 3
+                if role == "plate" and (not ft.can_chop and not ft.can_cook):
+                    bonus += 3
+                if role == "runner":
+                    bonus += 1
+                items.append((bonus, -steps, ft.buy_cost, ft))
+            return items
+
+        candidates = build_candidates(strict_roles)
+        if not candidates and strict_roles:
+            candidates = build_candidates(False)
         if not candidates:
             return None
         candidates.sort(reverse=True)
@@ -690,7 +798,7 @@ class BotPlayer:
         if self._take_cooked_food(controller, bot_id, missing):
             return True
 
-        foods_on_counters = self._find_food_on_counters(controller, missing)
+        foods_on_counters = self._find_food_on_counters(controller, missing, (bot["x"], bot["y"]))
         for x, y, item in foods_on_counters:
             if item.can_chop and not item.chopped:
                 if self._move_or_action(controller, bot_id, x, y, lambda: controller.chop(bot_id, x, y)):
@@ -1017,7 +1125,7 @@ class BotPlayer:
             if order is None:
                 self.current_order_id = None
         if self.current_order_id is None:
-            order = self._choose_order(controller)
+            order = self._choose_order(controller, len(bot_ids))
             if order is not None:
                 self.current_order_id = order.get("order_id")
 
@@ -1033,6 +1141,12 @@ class BotPlayer:
         extra = plate_counter - required
         bad_plate = bool(extra)
         missing = required - plate_counter
+        required_names = set(required.keys())
+        inflight_tiles = self._collect_inflight_food(controller, required_names)
+        holdings = self._collect_holding_food(controller, bot_ids, required_names)
+        holding_counter = Counter()
+        for h in holdings:
+            holding_counter[h["name"]] += 1
 
         # prioritize plate bot first to keep the plate in place
         role_order = ["plate", "cook", "prep", "runner"]
@@ -1044,8 +1158,8 @@ class BotPlayer:
             self._move_or_action(controller, plate_bot, ax, ay, lambda: controller.pickup(plate_bot, ax, ay))
             return
 
-        plan_missing = missing.copy()
-        strict_roles = len(bot_ids) > 1
+        plan_missing = missing - inflight_tiles - holding_counter
+        strict_roles = len(bot_ids) > 1 and sum(missing.values()) >= len(bot_ids)
         assignments: Dict[int, Optional[FoodType]] = {}
         for bid in bots_by_role:
             role = self.role_by_bot.get(bid, "runner")
