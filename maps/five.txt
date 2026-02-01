@@ -8,7 +8,7 @@ BCKCU.CKCB
 .C$C..C$C.
 ...C..C...
 .CRC..CRC.
-.C......C.
+bC......Cb
 
 SWITCH: turn=250 duration=100
 
