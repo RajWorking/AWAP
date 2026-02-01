@@ -257,12 +257,12 @@ class BotPlayer:
         for o in orders:
             foods = self._order_foods(o)
     
-            food_cost = sum(int(getattr(f, "buy_cost", 0)) for f in foods)
+            food_cost = abs(sum(int(getattr(f, "buy_cost", 0)) for f in foods))
             cost = food_cost + 2
     
             reward = abs(int(o.get("reward", 0))) + abs(int(o.get("penalty", 0)))
             expires = int(o.get("expires_turn", 0))
-            remaining_turns = expires - current_turn
+            remaining_turns = abs(expires) - abs(current_turn)
             
             
             # remaining_turns = 89
