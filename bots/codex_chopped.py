@@ -308,7 +308,7 @@ class BotPlayer:
             total_value = reward + penalty
             
             # Check feasibility
-            feasible = cost <= team_money && total_value > cost
+            feasible = cost <= team_money and total_value > cost
             
             # Reward per effort unit
             efficiency = total_value / max(effort, 1)
