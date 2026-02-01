@@ -257,8 +257,9 @@ class BotPlayer:
             cost = sum(int(getattr(f, "buy_cost", 0)) for f in foods) + int(ShopCosts.PLATE.buy_cost)
             reward = int(o.get("reward", 0))
             penalty = int(o.get("penalty", 0))
+            created = int(o.get("created_turn", 0))
             expires = int(o.get("expires_turn", 0))
-            remaining_turns = expires - current_turn
+            remaining_turns = expires + created - current_turn
             has_cooking = any(f.can_cook for f in foods)
             min_turns_needed = 50 if has_cooking else 10
             if remaining_turns < min_turns_needed:
@@ -266,7 +267,7 @@ class BotPlayer:
 
             num_ingredients = len(foods)
             cooking_count = sum(1 for f in foods if f.can_cook)
-            estimated_turns = num_ingredients * 35 + cooking_count * 30
+            estimated_turns = num_ingredients * 20 + cooking_count * 30
             if remaining_turns < estimated_turns * 1.2:
                 continue
 
@@ -277,10 +278,11 @@ class BotPlayer:
                     effort += 2
                 if f.can_cook:
                     effort += 3
-            feasible = cost <= team_money
+            
             total_value = reward + penalty
+            valuable = cost < total_value
             adjusted_reward = total_value - effort * 10
-            score = (1 if feasible else 0, adjusted_reward, total_value, -expires, -len(foods))
+            score = (1 if valuable else 0, adjusted_reward, total_value, -expires - created, -len(foods))
             scored.append((score, o))
         if not scored:
             return None
